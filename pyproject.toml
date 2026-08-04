@@ -1,0 +1,41 @@
+[project]
+name = "lethefield"
+version = "0.1.0"
+description = "Lethefield — FF 驱动的记忆状态场（1.0 开发 monorepo 根，虚拟包）"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "lethefield-auth-registry",
+    "lethefield-clients",
+    "lethefield-decision-log",
+    "lethefield-logschema",
+    "lethefield-metrics",
+    "gremlinpython>=3.7",
+    "ruff>=0.6",
+    "pytest>=8.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["libs/*", "ops/*"]
+
+[tool.uv.sources]
+lethefield-auth-registry = { workspace = true }
+lethefield-clients = { workspace = true }
+lethefield-decision-log = { workspace = true }
+lethefield-logschema = { workspace = true }
+lethefield-metrics = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["libs", "ops"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

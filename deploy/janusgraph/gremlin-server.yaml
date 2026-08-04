@@ -1,0 +1,37 @@
+# JanusGraph Gremlin Server 配置
+# 关键点：graphManager = JanusGraphManager + ConfigurationManagementGraph 图，
+# 使 ConfiguredGraphFactory.createConfiguration/open 可用（动态图、每图独立 keyspace）。
+host: 0.0.0.0
+port: 8182
+evaluationTimeout: 30000
+channelizer: org.apache.tinkerpop.gremlin.server.channel.WebSocketChannelizer
+graphManager: org.janusgraph.graphdb.management.JanusGraphManager
+graphs: {
+  ConfigurationManagementGraph: /opt/janusgraph/conf/gremlin-server/janusgraph-server.properties
+}
+scriptEngines: {
+  gremlin-groovy: {
+    plugins: { org.janusgraph.graphdb.tinkerpop.plugin.JanusGraphGremlinPlugin: {},
+               org.apache.tinkerpop.gremlin.server.jsr223.GremlinServerGremlinPlugin: {},
+               org.apache.tinkerpop.gremlin.groovy.jsr223.GroovyCompilerGremlinPlugin: {},
+               org.apache.tinkerpop.gremlin.jsr223.ImportGremlinPlugin: {classImports: [java.lang.Math], methodImports: [java.lang.Math#*]},
+               org.apache.tinkerpop.gremlin.jsr223.ScriptFileGremlinPlugin: {files: []}}}}
+serializers:
+  - { className: org.apache.tinkerpop.gremlin.util.ser.GraphBinaryMessageSerializerV1, config: { ioRegistries: [org.janusgraph.graphdb.tinkerpop.JanusGraphIoRegistry] }}
+processors:
+  - { className: org.apache.tinkerpop.gremlin.server.op.session.SessionOpProcessor, config: { sessionTimeout: 28800000 }}
+metrics: {
+  consoleReporter: {enabled: false, interval: 180000},
+  csvReporter: {enabled: false, interval: 180000, fileName: /tmp/gremlin-server-metrics.csv},
+  jmxReporter: {enabled: false},
+  slf4jReporter: {enabled: false, interval: 180000},
+  gangliaReporter: {enabled: false, interval: 180000, addressingMode: MULTICAST},
+  graphiteReporter: {enabled: false, interval: 180000}}
+maxInitialLineLength: 4096
+maxHeaderSize: 8192
+maxChunkSize: 8192
+maxContentLength: 65536
+maxAccumulationBufferComponents: 1024
+resultIterationBatchSize: 64
+writeBufferLowWaterMark: 32768
+writeBufferHighWaterMark: 65536

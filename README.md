@@ -1,0 +1,43 @@
+# Lethefield — 1.0 开发 monorepo
+
+FF（遗忘函数）驱动的记忆状态场。设计定案见根目录《Lethefield-设计文档》v1.7，
+开发执行依据见《Lethefield-开发文档》v1.2。**当前进度：M0 工程地基。**
+
+## 快速上手
+
+前置依赖：Docker（macOS 用 colima）、[uv](https://docs.astral.sh/uv/)。
+
+```bash
+bash scripts/ci.sh   # = lint + 单测 + 起全栈 + 集成测试（spike q1–q4 四断言基线）
+```
+
+或分步：
+
+```bash
+make lint    # ruff 静态检查
+make test    # 单元测试（libs + ops，不需要全栈）
+make up      # 起单节点全栈并等待就绪
+make itest   # 集成测试（需要全栈）
+make down    # 停栈
+make reset   # 清数据卷重起（危险：清空本地全部数据）
+```
+
+## 仓库结构
+
+```
+libs/logschema/    结构化日志事件 schema（M12 日志管线原料）
+libs/metrics/      指标 registry 封装（命名规则 + 标签白/黑名单代码层强制）
+libs/clients/      存储/Pulsar 客户端封装 + ControlPlaneStore 抽象（M0 冻结接口）
+ops/decision_log/  决策留痕表单最小实现（§11.3）
+ops/auth_registry/ 训练数据授权注册表最小实现（§12.4）
+services/          服务进程边界（M0 不写业务代码，见目录内 README）
+tests/integration/ spike q1–q4 移植的 CI 集成基线
+docker-compose.yml 单节点全栈：JanusGraph + Cassandra×2 + ES×2 + Pulsar + Redis + PostgreSQL
+```
+
+## 硬约束（开发文档 M0，违反即评审不通过）
+
+- 共享库只放 `libs/` 三样，禁止各服务重复造轮子。
+- 所有存储访问必须经 `ControlPlaneStore` 抽象（M0 冻结接口，M9 落地正式实现）。
+- 聚合指标标签禁止出现 `space_id` / `node_key`（libs/metrics 代码层强制）。
+- M0 不写任何 EX/RMS/SS/FS 业务逻辑。

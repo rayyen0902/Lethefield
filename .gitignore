@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# uv
+.python-version
+
+# OS
+.DS_Store
+
+# 部署数据卷（本地全栈运行数据，不入库）
+deploy/volumes/
