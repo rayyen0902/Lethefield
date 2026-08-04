@@ -13,6 +13,8 @@ M0（工程地基）、M1（存储基础设施）、M2（RMS 图 Schema）已完
 - kNN 跨 space 零泄漏 = `routing`（分片收拢）+ `space_id` 过滤（语义隔离）双重机制，
   只带 routing 会泄漏（分片是多 space 共享的）——M4 Stage 2 实现必须沿用，见 tests/integration/conftest.py。
 - Gremlin 绑定名避开保留字（`keys` 等）；返回值在服务端按元素逐个流回，不是嵌套列表。
+- gremlin_python 把 Python int 一律按 int32 序列化，毫秒时间戳等大数会溢出——Long 属性绑定用
+  字符串传输 + Groovy `as long` 强转（范例见 services/rms writer.py，M3/M15 沿用）。
 - M2 RMS schema 定案：16 个顶点属性键 / 5 边标签（temporal immutable）/ `byNodeKey` 唯一复合索引
   + `byEntityKey` 非唯一；向量走 ES 独立索引 `rms_vectors`（`node_key` 关联图顶点、`space_id` routing）。
   schema 常量单点定义在 `services/rms`（lethefield_rms.schema），groovy 脚本只含逻辑、元素名经绑定传入；
