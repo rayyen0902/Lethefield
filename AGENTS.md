@@ -2,8 +2,20 @@
 
 ## 项目阶段
 
-M0 工程地基（1.0 开发起点）。一切设计结论以《Lethefield-设计文档》v1.7 为准，
-开发执行以《Lethefield-开发文档》v1.2 为准；设计未覆盖的分支先升级确认，不自行拍板。
+M0（工程地基）、M1（存储基础设施）已完成并验证（本地 + GitHub Actions CI 全绿）。
+**下一个模块：M2 RMS 图 Schema**（开发文档 §3，主责 A 线：图 schema 是 M3 FF / M4 检索 / M15 写入链的地基）。
+一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
+设计未覆盖的分支先升级确认，不自行拍板。
+
+## 已验证的环境事实（不要凭印象推翻）
+
+- JanusGraph 1.0.0 `ids.authority.wait-time` 默认值实测 **300ms**（management toString = PT0.3S）。
+- kNN 跨 space 零泄漏 = `routing`（分片收拢）+ `space_id` 过滤（语义隔离）双重机制，
+  只带 routing 会泄漏（分片是多 space 共享的）——M4 Stage 2 实现必须沿用，见 tests/integration/conftest.py。
+- Gremlin 绑定名避开保留字（`keys` 等）；返回值在服务端按元素逐个流回，不是嵌套列表。
+- JanusGraph 顶点不支持 `v.both(Direction, label)` 直调，邻居扩展用 traversal 的 `both()` 步骤。
+- compose 里 Cassandra 必须显式设 `CASSANDRA_BROADCAST_RPC_ADDRESS`（官方镜像重启后会失效）。
+- spike 遗留容器（spike-elasticsearch 等）已停止但未删除，端口 8182/9042/9200 若被占先检查它们。
 
 ## 常用命令
 
