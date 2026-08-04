@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "cassandra-driver>=3.29",
     "elasticsearch>=8.13,<9",
+    "gremlinpython>=3.7",
     "pulsar-client>=3.4",
     "redis>=5.0",
     "psycopg[binary]>=3.1",

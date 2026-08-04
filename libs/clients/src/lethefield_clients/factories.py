@@ -9,6 +9,7 @@ import os
 import redis
 from cassandra.cluster import Cluster
 from elasticsearch import Elasticsearch
+from gremlin_python.driver.client import Client as GremlinClient
 from psycopg import Connection, connect
 from pulsar import Client
 
@@ -16,6 +17,7 @@ _ENV = {
     "cassandra_hosts": ("LETHEFIELD_CASSANDRA_HOSTS", "localhost"),
     "cassandra_port": ("LETHEFIELD_CASSANDRA_PORT", "9042"),
     "es_url": ("LETHEFIELD_ES_URL", "http://localhost:9200"),
+    "gremlin_url": ("LETHEFIELD_GREMLIN_URL", "ws://localhost:8182/gremlin"),
     "pulsar_url": ("LETHEFIELD_PULSAR_URL", "pulsar://localhost:6650"),
     "redis_url": ("LETHEFIELD_REDIS_URL", "redis://localhost:6379"),
     "pg_dsn": ("LETHEFIELD_PG_DSN", "postgresql://lethefield:lethefield@localhost:5432/lethefield"),
@@ -42,6 +44,17 @@ def cassandra_cluster(hosts: str | None = None, port: int | None = None) -> Clus
 
 def es_client(url: str | None = None) -> Elasticsearch:
     return Elasticsearch(url or _env("es_url"))
+
+
+def gremlin_client(
+    url: str | None = None, alias: str = "ConfigurationManagementGraph"
+) -> GremlinClient:
+    """构造 Gremlin 脚本提交客户端。
+
+    自定义 server yaml 只绑定 ConfigurationManagementGraph（动态图经
+    ConfiguredGraphFactory 管理），别名只需能解析，纯脚本提交用不到它。
+    """
+    return GremlinClient(url or _env("gremlin_url"), alias)
 
 
 def pulsar_client(url: str | None = None) -> Client:

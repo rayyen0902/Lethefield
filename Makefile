@@ -25,7 +25,7 @@ lint:
 
 ## 单元测试（不需要全栈）
 test:
-	$(PYTEST) libs ops
+	$(PYTEST) libs ops services
 
 ## 集成测试（需要全栈已就绪）
 itest:

@@ -1,0 +1,18 @@
+[project]
+name = "lethefield-rms"
+version = "0.1.0"
+description = "RMS 图 Schema 与写入链地基（M2：节点/边 schema、独立向量索引、writer）"
+requires-python = ">=3.12"
+dependencies = [
+    "lethefield-clients",
+]
+
+[tool.uv.sources]
+lethefield-clients = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lethefield_rms"]

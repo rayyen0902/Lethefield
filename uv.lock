@@ -11,6 +11,7 @@ members = [
     "lethefield-decision-log",
     "lethefield-logschema",
     "lethefield-metrics",
+    "lethefield-rms",
 ]
 
 [[package]]
@@ -486,6 +487,7 @@ dev = [
     { name = "lethefield-decision-log" },
     { name = "lethefield-logschema" },
     { name = "lethefield-metrics" },
+    { name = "lethefield-rms" },
     { name = "pytest" },
     { name = "requests" },
     { name = "ruff" },
@@ -502,6 +504,7 @@ dev = [
     { name = "lethefield-decision-log", editable = "ops/decision_log" },
     { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
+    { name = "lethefield-rms", editable = "services/rms" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "requests", specifier = ">=2.31" },
     { name = "ruff", specifier = ">=0.6" },
@@ -529,6 +532,7 @@ source = { editable = "libs/clients" }
 dependencies = [
     { name = "cassandra-driver" },
     { name = "elasticsearch" },
+    { name = "gremlinpython" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pulsar-client" },
     { name = "redis" },
@@ -538,6 +542,7 @@ dependencies = [
 requires-dist = [
     { name = "cassandra-driver", specifier = ">=3.29" },
     { name = "elasticsearch", specifier = ">=8.13,<9" },
+    { name = "gremlinpython", specifier = ">=3.7" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pulsar-client", specifier = ">=3.4" },
     { name = "redis", specifier = ">=5.0" },
@@ -604,6 +609,17 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "prometheus-client", specifier = ">=0.20" }]
+
+[[package]]
+name = "lethefield-rms"
+version = "0.1.0"
+source = { editable = "services/rms" }
+dependencies = [
+    { name = "lethefield-clients" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "lethefield-clients", editable = "libs/clients" }]
 
 [[package]]
 name = "multidict"

@@ -13,6 +13,7 @@ dev = [
     "lethefield-decision-log",
     "lethefield-logschema",
     "lethefield-metrics",
+    "lethefield-rms",
     "gremlinpython>=3.7",
     "requests>=2.31",
     "ruff>=0.6",
@@ -23,7 +24,7 @@ dev = [
 package = false
 
 [tool.uv.workspace]
-members = ["libs/*", "ops/*"]
+members = ["libs/*", "ops/*", "services/*"]
 
 [tool.uv.sources]
 lethefield-auth-registry = { workspace = true }
@@ -32,9 +33,10 @@ lethefield-clock-monitor = { workspace = true }
 lethefield-decision-log = { workspace = true }
 lethefield-logschema = { workspace = true }
 lethefield-metrics = { workspace = true }
+lethefield-rms = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["libs", "ops"]
+testpaths = ["libs", "ops", "services"]
 
 [tool.ruff]
 target-version = "py312"
