@@ -1,0 +1,8 @@
+{"component": "postgres", "restart_to_ready_seconds": 1, "measured_at": "2026-08-04T18:20:15Z"}
+{"component": "redis", "restart_to_ready_seconds": 0, "measured_at": "2026-08-04T18:20:16Z"}
+{"component": "cassandra-cell", "restart_to_ready_seconds": 29, "measured_at": "2026-08-04T18:20:52Z"}
+{"component": "cassandra-ex", "restart_to_ready_seconds": 27, "measured_at": "2026-08-04T18:21:25Z"}
+{"component": "es-graph", "restart_to_ready_seconds": 40, "measured_at": "2026-08-04T18:22:09Z"}
+{"component": "es-ops", "restart_to_ready_seconds": 39, "measured_at": "2026-08-04T18:22:53Z"}
+{"component": "pulsar", "restart_to_ready_seconds": 17, "measured_at": "2026-08-04T18:23:19Z"}
+{"component": "janusgraph", "restart_to_ready_seconds": 58, "measured_at": "2026-08-04T18:24:22Z"}

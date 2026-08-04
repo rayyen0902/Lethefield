@@ -11,6 +11,7 @@ services:
       HEAP_NEWSIZE: 256M
       CASSANDRA_RPC_ADDRESS: "0.0.0.0"
       CASSANDRA_BROADCAST_RPC_ADDRESS: cassandra-cell
+      CASSANDRA_CLUSTER_NAME: lethefield-cell
     ports:
       - "9042:9042"
     volumes:
@@ -29,6 +30,7 @@ services:
       HEAP_NEWSIZE: 256M
       CASSANDRA_RPC_ADDRESS: "0.0.0.0"
       CASSANDRA_BROADCAST_RPC_ADDRESS: cassandra-ex
+      CASSANDRA_CLUSTER_NAME: lethefield-ex
     ports:
       - "9043:9042"
     volumes:
@@ -43,6 +45,7 @@ services:
   es-graph:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     environment:
+      cluster.name: lethefield-graph
       discovery.type: single-node
       xpack.security.enabled: "false"
       ES_JAVA_OPTS: -Xms512m -Xmx512m
@@ -60,6 +63,7 @@ services:
   es-ops:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     environment:
+      cluster.name: lethefield-ops
       discovery.type: single-node
       xpack.security.enabled: "false"
       ES_JAVA_OPTS: -Xms512m -Xmx512m

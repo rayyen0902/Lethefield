@@ -14,6 +14,9 @@ M0 工程地基（1.0 开发起点）。一切设计结论以《Lethefield-设�
 | `make test` | 单元测试（libs + ops，不需要全栈） |
 | `make up` / `make down` / `make reset` | 起栈 / 停栈 / 清卷重起 |
 | `make itest` | 集成测试（需全栈已就绪） |
+| `uv run python scripts/verify_isolation.py` | M1：物理隔离证明巡检 |
+| `uv run python scripts/check_graph_config.py` | M1：`ids.authority.wait-time` 默认值巡检（红线 4） |
+| `uv run python -m lethefield_clock_monitor` | M1：时钟偏移巡检（红线 6），超阈值退出码 1 告警 |
 
 ## 约定
 

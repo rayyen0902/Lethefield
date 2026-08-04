@@ -30,9 +30,19 @@ libs/metrics/      指标 registry 封装（命名规则 + 标签白/黑名单�
 libs/clients/      存储/Pulsar 客户端封装 + ControlPlaneStore 抽象（M0 冻结接口）
 ops/decision_log/  决策留痕表单最小实现（§11.3）
 ops/auth_registry/ 训练数据授权注册表最小实现（§12.4）
+ops/clock_monitor/ 时钟偏移监控告警（红线 6，M1 部署清单硬性项）
 services/          服务进程边界（M0 不写业务代码，见目录内 README）
-tests/integration/ spike q1–q4 移植的 CI 集成基线
+tests/integration/ spike q1–q4 移植的 CI 集成基线 + M1 巡检测试
 docker-compose.yml 单节点全栈：JanusGraph + Cassandra×2 + ES×2 + Pulsar + Redis + PostgreSQL
+```
+
+## 巡检脚本（M1）
+
+```bash
+uv run python scripts/verify_isolation.py      # 4 类存储物理隔离证明（M1 验收 1）
+uv run python scripts/check_graph_config.py    # ids.authority.wait-time 默认值核验（红线 4）
+uv run python -m lethefield_clock_monitor      # 时钟偏移巡检，超阈值告警（红线 6）
+bash scripts/measure_restart_baseline.sh       # 重启至可服务时间基线（手动，非 CI）
 ```
 
 ## 硬约束（开发文档 M0，违反即评审不通过）

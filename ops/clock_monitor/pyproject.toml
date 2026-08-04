@@ -1,0 +1,25 @@
+[project]
+name = "lethefield-clock-monitor"
+version = "0.1.0"
+description = "时钟偏移监控告警（红线 6，M1 部署清单硬性项）"
+requires-python = ">=3.12"
+dependencies = [
+    "lethefield-clients",
+    "lethefield-logschema",
+    "cassandra-driver>=3.29",
+    "gremlinpython>=3.7",
+    "psycopg[binary]>=3.1",
+    "redis>=5.0",
+    "requests>=2.31",
+]
+
+[tool.uv.sources]
+lethefield-clients = { workspace = true }
+lethefield-logschema = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lethefield_clock_monitor"]
