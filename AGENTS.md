@@ -3,7 +3,7 @@
 ## 项目阶段
 
 M0–M6（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
-FS sweep worker）已完成并验证（M0–M3 CI 全绿，M4–M6 CI 待提交后确认）。
+FS sweep worker）已完成并验证（M0–M6 CI 全绿）。
 **下一个模块：M7 纠错机制（supersedes）**（开发文档 §8：纠错事件化、同一对节点幂等、
 reinforce 时间窗合并；重放重建脚本须复用 `ff.archive_eligible` 与 libs/clients archive 访问层）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
