@@ -15,6 +15,8 @@
   任何 δ 调整立即重算（设计文档 §13.6）。缓存值是**绝对遗忘视界**
   （n_last_touched + n*），否则与绝对事件序号 n_now 的比较不成立；
   ceil 取整——粗筛宁可多留候选，不可误杀尚未跨界的节点。
+- **固化锁定**（M6）：节点带 `consolidated_at` 时，δ 不改 s、不动
+  n_last_touched / n_star_cached，仅计数器照计（计数是事实记录，不是状态修改）。
 
 占位参数（λ=0.16、θ_base=0.3、t/t₀=1.0、N_neglect=20）沿用 spike/M0 测试口径，
 正式标定属种子期；s 合法区间 [0,1] 按显著性语义设定（设计未明文给定，可配）。
@@ -22,6 +24,7 @@
 
 import math
 from dataclasses import dataclass
+from datetime import datetime
 
 from gremlin_python.driver.client import Client
 from lethefield_metrics import counter as _metric_counter
@@ -55,6 +58,7 @@ class FFConfig:
 
     lambda_decay: float = 0.16  # λ 衰减率
     n_neglect: int = 20  # N_neglect 忽视间隔（M6 sweep 触发条件用，引擎本身不消费）
+    grace_n: int = 40  # 归档宽限期（事件距离，M6 定案；占位 2×N_neglect，§20 待标定）
     t_over_t0: float = 1.0  # 公式时间因子 t/t₀ 占位
     theta_base: float = 0.3  # n_star_cached 重算的默认 θ（查询时 θ 另由 ρ 推导）
     s_min: float = 0.0  # s 合法区间下界
@@ -66,7 +70,10 @@ DEFAULT_CONFIG = FFConfig()
 
 @dataclass(frozen=True)
 class PhiState:
-    """节点 φ_i 状态块（设计文档 §4.1）的读取快照。"""
+    """节点 φ_i 状态块（设计文档 §4.1）的读取快照。
+
+    consolidated_at 非空 = 已固化（M6）：s 锁定、跳过衰减与 sweep，
+    n_star_cached 固化时置 LONG_MAX。"""
 
     s: float
     n_last_touched: int
@@ -74,6 +81,7 @@ class PhiState:
     reinforce_count: int
     conflict_count: int
     neglect_count: int
+    consolidated_at: datetime | None = None  # 缺省兼容旧构造点；非空 = 已固化
 
 
 # ---------------------------------------------------------------- 纯函数（现算，不触存储）
@@ -143,24 +151,41 @@ def clamp_s(s: float, *, config: FFConfig = DEFAULT_CONFIG) -> tuple[float, str 
     return s, None
 
 
+def archive_eligible(n_now: int, n_star_cached: int, grace_n: int) -> bool:
+    """归档资格纯判定（设计文档 §13.4，M6 定案：宽限期为事件距离 grace_n）。
+
+    `n_now ≥ n_star_cached + grace_n` 才归档。两个免费正确性：
+    - 固化节点 n_star_cached = LONG_MAX → 永不满足，天然排除；
+    - 宽限期内任何 reinforce/conflict 会把 n_star_cached 推过 n_now，资格自动失效
+      （零额外状态、零竞态窗口）。
+
+    **M7 重放重建脚本必须复用本函数**，归档判定从 EX 事件流确定性重推，禁止抄一份。
+    """
+    return n_now >= n_star_cached + grace_n
+
+
 # ---------------------------------------------------------------- 图读写（δ 三条触发路径）
 
 _READ_PHI_SCRIPT = """
 def t = ConfiguredGraphFactory.open(gname).traversal()
 t.V().has('space_id', spaceId).has('node_key', nodeKey)
     .valueMap('s', 'n_last_touched', 'n_star_cached',
-              'reinforce_count', 'conflict_count', 'neglect_count')
+              'reinforce_count', 'conflict_count', 'neglect_count', 'consolidated_at')
     .next()
 """
 
 # δ 落库脚本：只持久化 Python 侧已算好的结果（公式与截断全部在引擎内，Groovy 不算 FF）。
 # long 型以字符串绑定传输 + Groovy `as long` 强转（gremlin_python int32 序列化限制）。
+# locked=true（节点已固化）：s / n_last_touched / n_star_cached 一律不写，仅计数器 +1
+# （M6 定案：固化后 ±δ 不改 s，计数是事实记录照计）。
 _APPLY_DELTA_SCRIPT = """
 def t = ConfiguredGraphFactory.open(gname).traversal()
 def v = t.V().has('space_id', spaceId).has('node_key', nodeKey).next()
-v.property('s', sNew as double)
-v.property('n_star_cached', nStar as long)
-if (touchFlag) { v.property('n_last_touched', nNow as long) }
+if (!locked) {
+    v.property('s', sNew as double)
+    v.property('n_star_cached', nStar as long)
+    if (touchFlag) { v.property('n_last_touched', nNow as long) }
+}
 v.property(counterKey, (v.value(counterKey) as int) + 1)
 t.tx().commit()
 'ok'
@@ -184,6 +209,34 @@ def read_phi(client: Client, gname: str, *, space_id: str, node_key: str) -> Phi
         reinforce_count=merged["reinforce_count"][0],
         conflict_count=merged["conflict_count"][0],
         neglect_count=merged["neglect_count"][0],
+        consolidated_at=merged["consolidated_at"][0] if "consolidated_at" in merged else None,
+    )
+
+
+def compute_delta(
+    phi: PhiState,
+    *,
+    delta: float,
+    touch: bool,
+    counter_key: str,
+    n_now: int,
+    config: FFConfig = DEFAULT_CONFIG,
+) -> PhiState:
+    """δ 调整纯决策（不触存储）：固化节点 s/视界锁定、仅计数器 +1；其余照常算。"""
+    if phi.consolidated_at is not None:
+        new_s, n_touched, n_star = phi.s, phi.n_last_touched, phi.n_star_cached
+    else:
+        new_s, _bound = clamp_s(phi.s + delta, config=config)
+        n_touched = n_now if touch else phi.n_last_touched
+        n_star = n_star_horizon(new_s, n_touched, config.theta_base, config=config)
+    return PhiState(
+        s=new_s,
+        n_last_touched=n_touched,
+        n_star_cached=n_star,
+        reinforce_count=phi.reinforce_count + (counter_key == "reinforce_count"),
+        conflict_count=phi.conflict_count + (counter_key == "conflict_count"),
+        neglect_count=phi.neglect_count + (counter_key == "neglect_count"),
+        consolidated_at=phi.consolidated_at,
     )
 
 
@@ -201,9 +254,9 @@ def _apply_delta(
 ) -> PhiState:
     """读 φ → 引擎内算 δ/截断/n_star → 落库，返回更新后的状态。"""
     phi = read_phi(client, gname, space_id=space_id, node_key=node_key)
-    new_s, _bound = clamp_s(phi.s + delta, config=config)
-    n_touched = n_now if touch else phi.n_last_touched
-    n_star = n_star_horizon(new_s, n_touched, config.theta_base, config=config)
+    new = compute_delta(
+        phi, delta=delta, touch=touch, counter_key=counter_key, n_now=n_now, config=config
+    )
     result = (
         client.submit(
             _APPLY_DELTA_SCRIPT,
@@ -211,11 +264,12 @@ def _apply_delta(
                 "gname": gname,
                 "spaceId": space_id,
                 "nodeKey": node_key,
-                "sNew": new_s,
-                "nStar": str(n_star),
+                "sNew": new.s,
+                "nStar": str(new.n_star_cached),
                 "touchFlag": touch,
                 "nNow": str(n_now),
                 "counterKey": counter_key,
+                "locked": phi.consolidated_at is not None,
             },
         )
         .all()
@@ -223,14 +277,7 @@ def _apply_delta(
     )
     if "ok" not in result:
         raise RuntimeError(f"δ 更新未返回 ok：{result}")
-    return PhiState(
-        s=new_s,
-        n_last_touched=n_touched,
-        n_star_cached=n_star,
-        reinforce_count=phi.reinforce_count + (counter_key == "reinforce_count"),
-        conflict_count=phi.conflict_count + (counter_key == "conflict_count"),
-        neglect_count=phi.neglect_count + (counter_key == "neglect_count"),
-    )
+    return new
 
 
 def apply_reinforce(

@@ -59,3 +59,33 @@ def test_list_cells_filter(store):
     assert len(store.list_cells()) == 1
     assert len(store.list_cells(WatermarkState.OPEN)) == 1
     assert store.list_cells(WatermarkState.CLOSED) == []
+
+
+def test_list_spaces_static(store):
+    assert store.list_spaces() == []
+    store.register_space(_mapping("space-b"))
+    store.register_space(_mapping("space-a"))
+    assert store.list_spaces() == ["space-a", "space-b"]
+
+
+class _FakeExSession:
+    def __init__(self, keyspaces: list[str]) -> None:
+        self._rows = [type("Row", (), {"keyspace_name": k}) for k in keyspaces]
+
+    def execute(self, query: str):
+        assert "system_schema.keyspaces" in query
+        return self._rows
+
+
+def test_ex_keyspace_store_derives_spaces(store):
+    from lethefield_clients import ExKeyspaceControlPlaneStore
+
+    ex = ExKeyspaceControlPlaneStore(
+        _FakeExSession(["ex_alpha", "ex_beta", "system_schema", "rms_graph"]),
+        delegate=store,
+    )
+    assert ex.list_spaces() == ["alpha", "beta"]
+    # 非枚举方法委托给 delegate
+    ex.register_space(_mapping("alpha"))
+    assert ex.get_space_mapping("alpha").cell_id == "cell-local"
+    assert ex.list_cells() == store.list_cells()

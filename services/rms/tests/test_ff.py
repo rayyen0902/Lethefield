@@ -5,12 +5,16 @@ n*/绝对遗忘视界、θ_effective、参数分层归属。图侧 δ 落库由�
 """
 
 import math
+from datetime import UTC, datetime
 
 import pytest
 from lethefield_rms.ff import (
     DEFAULT_CONFIG,
     FFConfig,
+    PhiState,
+    archive_eligible,
     clamp_s,
+    compute_delta,
     n_star,
     n_star_horizon,
     s_effective,
@@ -130,3 +134,78 @@ class TestParameterLayering:
     def test_config_is_frozen(self):
         with pytest.raises(AttributeError):
             DEFAULT_CONFIG.lambda_decay = 0.2  # type: ignore[misc]
+
+
+class TestArchiveEligible:
+    """归档资格纯判定（M6 定案：n_now ≥ n_star_cached + grace_n）。"""
+
+    def test_not_eligible_before_grace(self):
+        assert not archive_eligible(n_now=100, n_star_cached=80, grace_n=40)
+
+    def test_eligible_at_boundary(self):
+        assert archive_eligible(n_now=120, n_star_cached=80, grace_n=40)
+
+    def test_consolidated_never_eligible(self):
+        # 固化节点 n_star_cached = LONG_MAX → 永不满足，天然排除
+        assert not archive_eligible(n_now=10**12, n_star_cached=2**63 - 1, grace_n=40)
+
+    def test_reinforce_pushes_horizon_cancels_eligibility(self):
+        # 宽限期内 reinforce：n_last_touched 前移 → n_star_cached 推过 n_now，资格自动失效
+        assert archive_eligible(n_now=130, n_star_cached=80, grace_n=40)
+        assert not archive_eligible(n_now=130, n_star_cached=140, grace_n=40)
+
+
+class TestComputeDeltaConsolidated:
+    """固化锁定分支（M6 定案）：δ 不改 s / n_last_touched / n_star_cached，计数器照计。"""
+
+    def _consolidated_phi(self) -> PhiState:
+        return PhiState(
+            s=0.05,
+            n_last_touched=10,
+            n_star_cached=2**63 - 1,
+            reinforce_count=3,
+            conflict_count=0,
+            neglect_count=1,
+            consolidated_at=datetime(2026, 8, 5, tzinfo=UTC),
+        )
+
+    def test_reinforce_locks_s_but_counts(self):
+        new = compute_delta(
+            self._consolidated_phi(),
+            delta=0.2,
+            touch=True,
+            counter_key="reinforce_count",
+            n_now=500,
+        )
+        assert new.s == 0.05  # s 锁定（0.05 + 0.2 不生效）
+        assert new.n_last_touched == 10  # 不写
+        assert new.n_star_cached == 2**63 - 1  # 不动
+        assert new.reinforce_count == 4  # 计数器照计
+
+    def test_conflict_locks_s_but_counts(self):
+        new = compute_delta(
+            self._consolidated_phi(),
+            delta=-0.5,
+            touch=True,
+            counter_key="conflict_count",
+            n_now=500,
+        )
+        assert new.s == 0.05
+        assert new.conflict_count == 1
+
+    def test_unlocked_node_unchanged_behavior(self):
+        phi = PhiState(
+            s=0.5,
+            n_last_touched=10,
+            n_star_cached=10,
+            reinforce_count=0,
+            conflict_count=0,
+            neglect_count=0,
+        )
+        new = compute_delta(phi, delta=0.2, touch=True, counter_key="reinforce_count", n_now=500)
+        assert new.s == pytest.approx(0.7)
+        assert new.n_last_touched == 500  # touch 生效
+        assert new.consolidated_at is None
+
+    def test_config_has_grace_n(self):
+        assert DEFAULT_CONFIG.grace_n == 40  # 占位 2×N_neglect，§20 待标定

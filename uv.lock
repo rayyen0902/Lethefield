@@ -14,6 +14,7 @@ members = [
     "lethefield-clients",
     "lethefield-clock-monitor",
     "lethefield-decision-log",
+    "lethefield-fs",
     "lethefield-logschema",
     "lethefield-metrics",
     "lethefield-rms",
@@ -737,6 +738,7 @@ dev = [
     { name = "lethefield-clients" },
     { name = "lethefield-clock-monitor" },
     { name = "lethefield-decision-log" },
+    { name = "lethefield-fs" },
     { name = "lethefield-logschema" },
     { name = "lethefield-metrics" },
     { name = "lethefield-rms" },
@@ -755,6 +757,7 @@ dev = [
     { name = "lethefield-clients", editable = "libs/clients" },
     { name = "lethefield-clock-monitor", editable = "ops/clock_monitor" },
     { name = "lethefield-decision-log", editable = "ops/decision_log" },
+    { name = "lethefield-fs", editable = "services/fs" },
     { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
     { name = "lethefield-rms", editable = "services/rms" },
@@ -866,6 +869,23 @@ dependencies = [
 requires-dist = [
     { name = "lethefield-clients", editable = "libs/clients" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
+]
+
+[[package]]
+name = "lethefield-fs"
+version = "0.1.0"
+source = { editable = "services/fs" }
+dependencies = [
+    { name = "lethefield-clients" },
+    { name = "lethefield-metrics" },
+    { name = "lethefield-rms" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-metrics", editable = "libs/metrics" },
+    { name = "lethefield-rms", editable = "services/rms" },
 ]
 
 [[package]]

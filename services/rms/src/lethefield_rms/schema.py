@@ -10,7 +10,7 @@ from importlib import resources
 from gremlin_python.driver.client import Client
 from lethefield_clients import gremlin_client
 
-# 顶点属性键 → JanusGraph 类型简单名（对齐开发文档 §3 节点表，共 16 个）
+# 顶点属性键 → JanusGraph 类型简单名（对齐开发文档 §3 节点表，共 17 个，M6 增 consolidated_at）
 EXPECTED_PROPERTY_KEYS: dict[str, str] = {
     "node_key": "String",  # 顶点全局唯一标识（唯一复合索引 byNodeKey）
     "space_id": "String",  # 图遍历一律 has("space_id", sid) 开头（红线：禁全局扫描）
@@ -27,6 +27,7 @@ EXPECTED_PROPERTY_KEYS: dict[str, str] = {
     "reinforce_count": "Integer",  # φ_i 累积强化次数
     "conflict_count": "Integer",  # φ_i 累积冲突失效次数
     "neglect_count": "Integer",  # φ_i 累积忽视惩罚次数（M6 用）
+    "consolidated_at": "Date",  # 固化时间戳（M6 第 17 键定案）：存在即固化态，s 锁定
     "entity_key": "String",  # 实体顶点标识（非唯一复合索引 byEntityKey）
 }
 

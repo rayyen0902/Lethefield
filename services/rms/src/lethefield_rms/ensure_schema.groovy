@@ -14,7 +14,8 @@
 // property-keys: node_key=String, space_id=String, node_type=String, content=String,
 //   tau=Date, agent_actor_id=String, attrs=String, ref_ex=String, s=Double,
 //   n_created=Long, n_last_touched=Long, n_star_cached=Long,
-//   reinforce_count=Integer, conflict_count=Integer, neglect_count=Integer, entity_key=String
+//   reinforce_count=Integer, conflict_count=Integer, neglect_count=Integer,
+//   consolidated_at=Date, entity_key=String
 // edge-labels: temporal, semantic, causal, entity, supersedes
 // indexes: byNodeKey(node_key, unique), byEntityKey(entity_key)
 //

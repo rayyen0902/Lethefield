@@ -3,7 +3,10 @@
 # 使 ConfiguredGraphFactory.createConfiguration/open 可用（动态图、每图独立 keyspace）。
 host: 0.0.0.0
 port: 8182
-evaluationTimeout: 30000
+# 冷图创建（Cassandra keyspace + ES 图索引 + management 事务）在全量集成套件负载下
+# 实测可超过默认 30s（M6 每用例独立图）。开发/测试栈放宽到 3 分钟；
+# 该值同时是脚本执行上限，生产形态收紧时再评估。
+evaluationTimeout: 180000
 channelizer: org.apache.tinkerpop.gremlin.server.channel.WebSocketChannelizer
 graphManager: org.janusgraph.graphdb.management.JanusGraphManager
 graphs: {

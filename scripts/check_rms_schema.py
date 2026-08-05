@@ -3,7 +3,7 @@
 四层检查：
 1. 静态：ensure_schema.groovy 与 schema.py 常量一致、无禁项
    （ids.authority.wait-time / drop，红线 4 与红线 5）
-2. 图侧：指定图的 management 只读检查 16 属性键及类型、5 边标签、2 复合索引
+2. 图侧：指定图的 management 只读检查 17 属性键及类型、5 边标签、2 复合索引
 3. 向量侧：rms_vectors 存在且 mapping 正确（node_key/space_id keyword、v dims>0）
 4. ref_ex 抽样：event 顶点的 ref_ex 非空、为字符串、图内唯一。
    注意：ref_ex 的全链路追溯依赖 EX 事件存储（M10 才建），本脚本只覆盖 RMS 侧

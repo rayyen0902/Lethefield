@@ -17,25 +17,19 @@ from datetime import UTC, datetime
 
 import redis as redis_lib
 from cassandra.cluster import Session
+from lethefield_clients.ex_n import EXPERIENCE_TABLE, keyspace_name, n_key, n_now
 
-EXPERIENCE_TABLE = "experience_events"
+__all__ = [
+    "EXPERIENCE_TABLE",
+    "META_TABLE",
+    "append_experience",
+    "append_meta",
+    "ensure_ex_keyspace",
+    "keyspace_name",
+    "n_now",
+]
+
 META_TABLE = "meta_events"
-
-
-def keyspace_name(space_id: str) -> str:
-    """EX keyspace 名。space_id 字符集约束由 M8 正式定义；此处 fail-closed：
-    不满足 [a-z0-9_]≤40 直接拒绝，不静默改写（防两个 space 映射到同一 keyspace）。"""
-    if (
-        not space_id
-        or len(space_id) > 40
-        or not all(c.islower() or c.isdigit() or c == "_" for c in space_id)
-    ):
-        raise ValueError(f"space_id {space_id!r} 不满足 EX keyspace 命名约束：[a-z0-9_]、≤40 字符")
-    return f"ex_{space_id}"
-
-
-def _n_key(space_id: str) -> str:
-    return f"ex:n:{space_id}"
 
 
 def ensure_ex_keyspace(session: Session, space_id: str) -> None:
@@ -91,7 +85,7 @@ def append_experience(
 ) -> tuple[str, int]:
     """写入经验事件：分配该 space 下一个 n，同步落表后返回（event_id, n）。"""
     ks = keyspace_name(space_id)
-    n: int = redis.incr(_n_key(space_id))  # 经验事件才推进 n（原子分配）
+    n: int = redis.incr(n_key(space_id))  # 经验事件才推进 n（原子分配）
     event_id = uuid.uuid4()
     session.execute(
         f"INSERT INTO {ks}.{EXPERIENCE_TABLE} "
@@ -132,15 +126,3 @@ def append_meta(
         ),
     )
     return str(event_id)
-
-
-def n_now(redis: redis_lib.Redis, session: Session, *, space_id: str) -> int:
-    """读取该 space 当前事件序号：Redis 缓存优先，失效时从 EX MAX(n) 重建。"""
-    cached = redis.get(_n_key(space_id))
-    if cached is not None:
-        return int(cached)
-    ks = keyspace_name(space_id)
-    row = session.execute(f"SELECT MAX(n) AS mx FROM {ks}.{EXPERIENCE_TABLE}").one()
-    current = row.mx if row and row.mx is not None else 0
-    redis.set(_n_key(space_id), current)
-    return current

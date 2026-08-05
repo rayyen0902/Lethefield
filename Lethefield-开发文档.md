@@ -8,6 +8,10 @@
 
 **v1.2 修订记录**（相对 v1.1）：
 1. 新增模块 M17（运维操作面）：显式定义 1.0 运维形态为 Grafana（读）+ 运维 CLI（写）+ 决策留痕表单（痕）；M9/M10 的人工触发点此前无责任模块，本模块收口；Web 管理后台明确不做，归 2.0。
+2. M6 升级确认定案：sweep 活跃 space 列表来源定为 `ControlPlaneStore` 抽象方法，过渡实现读 EX 集群元数据按 `ex_*` 命名推导，M9 落地后切映射表（详见 M6 忽视惩罚实现规则）。
+3. 固化机制升级确认定案：图 schema 加第 17 个顶点属性 `consolidated_at`（存在即固化态，兼作审计时间戳）；M4 两处 θ 硬过滤对固化节点旁路、`n_star_cached` 置 LONG_MAX；固化后 ±δ 不改 `s`（计数器照计）；固化节点被纠错照常建 supersedes 边、固化态 1.0 不解除（详见 M2/M4/M6）。
+4. 归档冷存储载体升级确认定案：本 space RMS keyspace 内专用表 `archived_nodes`；否决共享 keyspace 逻辑分区、EX 集群归档表、PG 三方案；重放重建与迁移校验须覆盖该表（详见 M6 节点生命周期）。
+5. 归档宽限期度量升级确认定案：事件距离 `grace_n`（`n_now ≥ n_star_cached + grace_n`），禁用墙钟——记忆动力学只在 n 域运算；静默 space 资源回收归封存层/tier 机制（详见 M6、§20）。
 
 **v1.1 修订记录**（相对 v1.0，评审发现的问题修复）：
 1. 新增模块 M0（工程地基）、M14（SS 显著性打分服务）、M15（写入链 worker）、M16（IS 简版）——v1.0 中 SS、写入链、IS 三处只有零散要求、无责任模块，属遗漏。
@@ -147,6 +151,7 @@
 | `φ_i.reinforce_count` | int | 累积强化次数 | JanusGraph 顶点属性 |
 | `φ_i.conflict_count` | int | 累积冲突失效次数 | JanusGraph 顶点属性 |
 | `φ_i.neglect_count` | int | 累积忽视惩罚次数（M6 用） | JanusGraph 顶点属性 |
+| `φ_i.consolidated_at` | timestamp | **固化时间戳，存在即固化态**（兼作标志位与审计信息；v1.2 升级确认定案，第 17 个顶点属性） | JanusGraph 顶点属性 |
 
 ### 四类关系图 + 纠错边
 
@@ -239,6 +244,7 @@ n* = ln(s/θ) / (λ × ln(1+t/t₀))              遗忘视界预测
 
 ### 前置粗筛
 - 图数据库查询前使用 `WHERE n_star_cached > $n_now` 排除明显跨越遗忘视界的节点。
+- **固化节点旁路（v1.2 定案）**：存在 `consolidated_at` 的节点不参与两处 `θ_effective` 硬过滤（Stage 2 后置、Stage 3 收敛后均跳过丢弃判定）；其 `n_star_cached=LONG_MAX`（M6 固化时置位）保证不被前置粗筛排除。固化≠失效，与 M7 禁失效标志红线不冲突——固化是有客观触发条件的生命周期状态，不是需要下沉到检索时的判断。
 
 ### ρ 旋钮作用范围（实现约束）
 `θ_effective = θ_base / ρ` **只作用于**：Stage 2 硬过滤 + Stage 3 收敛后硬过滤。**不影响** Stage 3 遍历中的软惩罚权重 λ3。两个旋钮必须在代码上物理隔离（不能共用一个"相关性阈值"变量）。
@@ -315,6 +321,7 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 - 触发动作：`s -= 0.1`，`neglect_count += 1`，**不更新 `n_last_touched`**。
 - `N_neglect` 为 agent-level constant，与 λ 同层按域固定，不在运行时改变。
 - sweep 按 space 分批执行，节奏只需显著快于 `N_neglect` 对应的事件推进速度，不要求实时。
+- **活跃 space 列表来源（v1.2 升级确认定案）**：实现为 `libs/clients` 的 `ControlPlaneStore` 抽象方法（如 `list_spaces()`），**禁止在 FS 服务内直连集群元数据**。M9 映射表落地前的过渡实现：读 EX 集群 schema 元数据，按 `ex_{space_id}` 命名约定（M5 契约 1 已冻结）推导 space 集合——只读控制面元数据，不扫数据、不违反红线 1，也不改冻结契约。已知过渡偏差：`destroying` 中的 space 会被扫入（sweep 幂等，无害），且拿不到 tier（冷热分层节奏在过渡期按统一节奏执行）。M9 落地后切换映射表真身（按 `status=active` + tier 过滤），sweep 代码零改动。
 - sweep 幂等性：同一忽视区间至多触发一次惩罚，重复扫描/重跑不产生重复惩罚（用 `neglect_count` 保证）。
 - sweep 任务自身必须纳入 Dead Man's Switch 式监控（sweep 停摆 = 忽视惩罚静默失效）。
 
@@ -322,8 +329,8 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 
 | 去向 | 触发条件 | 动作 |
 |---|---|---|
-| 归档 | `s_effective` 跌破 θ 且按 `n_star_cached` 预测已跨越遗忘视界、再经过宽限期，期间无任何 δ 触发 | 从 JanusGraph 热图移除，归档副本（节点字段+图邻接快照）写入冷存储；EX 原始记录不受影响 |
-| 固化 | `reinforce_count` 达阈值且期间无 conflict，或显式调用 | `s` 锁定、跳过衰减计算与 sweep、检索时不再被 θ_effective 过滤 |
+| 归档 | `s_effective` 跌破 θ 且按 `n_star_cached` 预测已跨越遗忘视界、再经过宽限期，期间无任何 δ 触发 | 从 JanusGraph 热图移除，归档副本（节点字段+图邻接快照）写入冷存储；EX 原始记录不受影响。**宽限期度量（v1.2 定案）：事件距离**——`n_now ≥ n_star_cached + grace_n` 才归档；期间任何 reinforce/conflict 会把 `n_star_cached` 推过 `n_now`，归档资格自动取消、无需额外状态。**禁用墙钟**：记忆动力学只在 n 域运算（静默 space 的记忆不该随日历衰减）；静默 space 的资源回收归封存层/tier 机制在基础设施层处理，两层不混。冷存储载体（v1.2 定案）：**本 space 自己的 RMS keyspace 内专用表 `archived_nodes`**（直写 CQL、不经 JanusGraph，per-table compaction 可调）；**禁止**共享 keyspace + `space_id` 分区（逻辑分区，销毁退化为 range delete）、禁止入 EX 集群（契约 1 冻结事件两表、source-of-truth 不混派生数据）、禁止 PG。销毁随 RMS keyspace 整体 DROP 自动完成；迁移 snapshot 自动携带（校验项需覆盖该表）；M7 重放重建脚本须一并重建归档表（归档判定可从 EX 确定性重推） |
+| 固化 | `reinforce_count` 达阈值且期间无 conflict，或显式调用 | `s` 锁定、跳过衰减计算与 sweep、检索时不再被 θ_effective 过滤。实现标记（v1.2 定案）：置 `consolidated_at` 时间戳 + `n_star_cached` 置 LONG_MAX（保证不被前置粗筛排除）；固化后 ±δ 不改 `s`（计数器照计，计数是事实记录）；固化节点被纠错时 supersedes 边照常建立（检索重定向兜底），固化态 1.0 不解除 |
 | 物理删除 | 仅用户主动请求，且**只能是整 space 销毁**（见 M10 注销流程） | 空间内单条事件不支持物理删除 |
 
 ### 事件序号 n 的实现要求（M6 依赖，写在此处便于对照）
@@ -802,7 +809,7 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 
 以下参数需在实测/种子期数据回填后标定，开发阶段先用配置项占位，**不要硬编码具体数值到业务逻辑中**：
 
-- FF 相关：`λ`、`N_neglect`、`θ_base`、归档宽限期、固化阈值（`reinforce_count` 阈值）。
+- FF 相关：`λ`、`N_neglect`、`θ_base`、归档宽限期 `grace_n`（**事件距离度量**，见 M6；不是墙钟秒数）、固化阈值（`reinforce_count` 阈值）。
 - SS 六维合成权重（ER/E/I/G/N/C → `s` 初值）：**禁止硬编码**，以配置占位，待种子期真实数据标定（见 M14）。
 - 各 `ff_*` 指标健康区间。
 - Cell 容量标定（单 Cell 真实承载上限）、水位阈值 70/90（初值）。

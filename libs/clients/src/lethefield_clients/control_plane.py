@@ -14,6 +14,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from cassandra.cluster import Session
+
+from lethefield_clients.ex_n import EX_KEYSPACE_PREFIX
+
 
 class SpaceStatus(StrEnum):
     ACTIVE = "active"
@@ -78,6 +82,15 @@ class ControlPlaneStore(ABC):
     def list_cells(self, watermark_state: WatermarkState | None = None) -> list[CellInfo]:
         """列出 Cell，可按水位状态过滤（调度选水位最低的 open Cell 用）。"""
 
+    @abstractmethod
+    def list_spaces(self) -> list[str]:
+        """列出当前需要周期维护（sweep）的 space 集合（M6 定案新增）。
+
+        过渡实现按 EX 集群 `ex_{space_id}` 命名约定从 keyspace 元数据推导；
+        M9 映射表落地后同一接口切换为按 status=active + tier 过滤，
+        调用方（FS sweep）零改动。
+        """
+
 
 class StaticControlPlaneStore(ControlPlaneStore):
     """单节点起步部署形态的开发用实现：单一本地 Cell，内存映射表。
@@ -138,3 +151,46 @@ class StaticControlPlaneStore(ControlPlaneStore):
         if watermark_state is None or self._cell.watermark_state == watermark_state:
             return [self._cell]
         return []
+
+    def list_spaces(self) -> list[str]:
+        return sorted(self._spaces)
+
+
+class ExKeyspaceControlPlaneStore(ControlPlaneStore):
+    """过渡期实现（M6 定案）：space 集合从 EX 集群 keyspace 元数据推导。
+
+    只读 `system_schema.keyspaces` 控制面元数据、按 `ex_{space_id}` 命名约定
+    （M5 冻结契约 1 的一部分）推导 space 集合——不扫数据，不违反红线 1。
+    已知过渡偏差（已入档）：destroying 中的 space 会被扫入（sweep 幂等无害）；
+    拿不到 tier，过渡期 sweep 按统一节奏。M9 调度器映射表落地后本类整体替换，
+    FS 调用方零改动。
+
+    映射读写方法委托给构造时传入的 delegate（过渡期通常 StaticControlPlaneStore）。
+    """
+
+    def __init__(self, ex_session: Session, delegate: ControlPlaneStore) -> None:
+        self._ex_session = ex_session
+        self._delegate = delegate
+
+    def list_spaces(self) -> list[str]:
+        rows = self._ex_session.execute("SELECT keyspace_name FROM system_schema.keyspaces")
+        return sorted(
+            row.keyspace_name[len(EX_KEYSPACE_PREFIX) :]
+            for row in rows
+            if row.keyspace_name.startswith(EX_KEYSPACE_PREFIX)
+        )
+
+    def get_space_mapping(self, space_id: str) -> SpaceMapping:
+        return self._delegate.get_space_mapping(space_id)
+
+    def register_space(self, mapping: SpaceMapping) -> None:
+        self._delegate.register_space(mapping)
+
+    def update_space_status(self, space_id: str, status: SpaceStatus) -> None:
+        self._delegate.update_space_status(space_id, status)
+
+    def get_cell(self, cell_id: str) -> CellInfo:
+        return self._delegate.get_cell(cell_id)
+
+    def list_cells(self, watermark_state: WatermarkState | None = None) -> list[CellInfo]:
+        return self._delegate.list_cells(watermark_state)

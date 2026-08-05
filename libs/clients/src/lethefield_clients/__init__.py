@@ -4,9 +4,16 @@
 所有模块的连接管理强制复用本库，禁止各写一套。
 """
 
+from lethefield_clients.archive import (
+    ARCHIVE_TABLE,
+    ensure_archive_table,
+    list_archived,
+    write_archive,
+)
 from lethefield_clients.control_plane import (
     CellInfo,
     ControlPlaneStore,
+    ExKeyspaceControlPlaneStore,
     SpaceMapping,
     SpaceNotFoundError,
     SpaceStatus,
@@ -14,6 +21,7 @@ from lethefield_clients.control_plane import (
     Tier,
     WatermarkState,
 )
+from lethefield_clients.ex_n import EXPERIENCE_TABLE, keyspace_name, n_key, n_now
 from lethefield_clients.factories import (
     cassandra_cluster,
     es_client,
@@ -25,8 +33,11 @@ from lethefield_clients.factories import (
 )
 
 __all__ = [
+    "ARCHIVE_TABLE",
+    "EXPERIENCE_TABLE",
     "CellInfo",
     "ControlPlaneStore",
+    "ExKeyspaceControlPlaneStore",
     "SpaceMapping",
     "SpaceNotFoundError",
     "SpaceStatus",
@@ -34,10 +45,16 @@ __all__ = [
     "Tier",
     "WatermarkState",
     "cassandra_cluster",
+    "ensure_archive_table",
     "es_client",
     "ex_cassandra_cluster",
     "gremlin_client",
+    "keyspace_name",
+    "list_archived",
+    "n_key",
+    "n_now",
     "pg_connection",
     "pulsar_client",
     "redis_client",
+    "write_archive",
 ]

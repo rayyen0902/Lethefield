@@ -16,6 +16,10 @@
 前置粗筛：图查询一律 `has('n_star_cached', gt(n_now))`（M3 绝对视界），排除明显
 跨越遗忘视界的节点；粗筛只用于降开销，不参与实时计算。
 
+固化节点（M6，带 `consolidated_at`）：s 锁定——s_effective 取 s 现值、跳过衰减
+现算；两处 θ_effective 硬过滤对其跳过丢弃判定；固化时 n_star_cached 已置
+LONG_MAX，粗筛天然放行。
+
 本轮升级确认的定案（见工作日志 M4）：
 - λ1·φ = 边类型先验权重 `edge_prior[label]`（占位常数，标定流程调整）；
 - λ2·sim 方案 A：锚点 = Stage 2 RRF 分，扩展节点 sim=0（**方案 B——继承父节点
@@ -67,13 +71,17 @@ DEFAULT_RETRIEVE_CONFIG = RetrieveConfig()
 
 @dataclass(frozen=True)
 class NodeProps:
-    """图侧取回的事件节点属性（φ + 内容）。"""
+    """图侧取回的事件节点属性（φ + 内容）。
+
+    consolidated=True（M6）：节点已固化——s 锁定（s_effective 取 s 现值，跳过衰减
+    现算），两处 θ_effective 硬过滤对其跳过丢弃判定。"""
 
     node_key: str
     s: float
     n_last_touched: int
     content: str
     tau: datetime | None
+    consolidated: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,6 +95,7 @@ class ScoredNode:
     sim: float
     path_score: float
     depth: int
+    consolidated: bool = False  # 固化节点：θ 硬过滤跳过丢弃（M6）
 
 
 @dataclass(frozen=True)
@@ -138,9 +147,10 @@ def t = ConfiguredGraphFactory.open(gname).traversal()
 def rows = t.V().has('space_id', spaceId).has('node_key', P.within(nodeKeys))
     .has('node_type', 'event')
     .has('n_star_cached', P.gt((nNow as long)))
-    .project('node_key', 's', 'n', 'content', 'tau')
+    .project('node_key', 's', 'n', 'content', 'tau', 'consolidated')
     .by(values('node_key')).by(values('s')).by(values('n_last_touched'))
     .by(values('content')).by(values('tau'))
+    .by(__.values('consolidated_at').fold())
     .toList()
 ['rows': rows]
 """
@@ -156,7 +166,8 @@ def rows = t.V().has('space_id', spaceId).has('node_key', P.within(frontierKeys)
     .has('node_type', 'event')
     .has('n_star_cached', P.gt((nNow as long)))
     .project('src_key', 'out_key', 'in_key', 'edge_label',
-             'dst_key', 'dst_s', 'dst_n', 'dst_content', 'dst_tau', 'superseded_by')
+             'dst_key', 'dst_s', 'dst_n', 'dst_content', 'dst_tau', 'dst_consolidated',
+             'superseded_by')
     .by(select('src').values('node_key'))
     .by(select('e').outV().values('node_key'))
     .by(select('e').inV().values('node_key'))
@@ -166,6 +177,7 @@ def rows = t.V().has('space_id', spaceId).has('node_key', P.within(frontierKeys)
     .by(values('n_last_touched'))
     .by(values('content'))
     .by(values('tau'))
+    .by(__.values('consolidated_at').fold())
     .by(__.in('supersedes').values('node_key').fold())
     .toList()
 ['rows': rows]
@@ -176,9 +188,10 @@ _RESOLVE_SCRIPT = """
 def t = ConfiguredGraphFactory.open(gname).traversal()
 def rows = t.V().has('space_id', spaceId).has('node_key', nk)
     .has('node_type', 'event')
-    .project('node_key', 's', 'n', 'content', 'tau', 'superseded_by')
+    .project('node_key', 's', 'n', 'content', 'tau', 'consolidated', 'superseded_by')
     .by(values('node_key')).by(values('s')).by(values('n_last_touched'))
     .by(values('content')).by(values('tau'))
+    .by(__.values('consolidated_at').fold())
     .by(__.in('supersedes').values('node_key').fold())
     .toList()
 ['rows': rows]
@@ -207,6 +220,13 @@ def _submit_rows(client: Client, script: str, bindings: dict) -> list[dict]:
 # ---------------------------------------------------------------- Stage 2 锚点识别（ES）
 
 
+def _s_eff(props: NodeProps, n_now: int, ff_config: ff.FFConfig) -> float:
+    """现算 s_effective；固化节点 s 锁定、跳过衰减计算，取 s 现值（M6 定案）。"""
+    if props.consolidated:
+        return props.s
+    return ff.s_effective(props.s, props.n_last_touched, n_now, config=ff_config)
+
+
 def _rrf_merge(rankings: list[list[dict]], rrf_k: int) -> dict[str, float]:
     """RRF 融合：score(d) = Σ 1/(rrf_k + rank)。输入只有检索 rank——s 永不进 RRF。"""
     scores: dict[str, float] = {}
@@ -233,6 +253,7 @@ def _fetch_nodes(
             n_last_touched=row["n"],
             content=row["content"],
             tau=row["tau"],
+            consolidated=bool(row["consolidated"]),
         )
         for row in rows
     }
@@ -272,9 +293,9 @@ def _stage2_anchors(
         props = props_map.get(key)
         if props is None:
             continue  # 图侧不存在或已跨遗忘视界（粗筛排除）
-        s_eff = ff.s_effective(props.s, props.n_last_touched, n_now, config=ff_config)
-        if s_eff < theta:
-            continue  # 第一次独立硬过滤（Stage 2 后置）
+        s_eff = _s_eff(props, n_now, ff_config)
+        if s_eff < theta and not props.consolidated:
+            continue  # 第一次独立硬过滤（Stage 2 后置；固化节点跳过丢弃判定）
         anchors.append(
             ScoredNode(
                 node_key=key,
@@ -284,6 +305,7 @@ def _stage2_anchors(
                 sim=rrf[key],  # 方案 A：锚点 sim = RRF 融合分
                 path_score=rrf[key],
                 depth=0,
+                consolidated=props.consolidated,
             )
         )
     return anchors
@@ -352,8 +374,17 @@ def _beam_search(
         return True
 
     def enter(props: NodeProps, sim: float, path_score: float, depth: int) -> ScoredNode:
-        s_eff = ff.s_effective(props.s, props.n_last_touched, n_now, config=ff_config)
-        node = ScoredNode(props.node_key, props.content, props.tau, s_eff, sim, path_score, depth)
+        s_eff = _s_eff(props, n_now, ff_config)
+        node = ScoredNode(
+            props.node_key,
+            props.content,
+            props.tau,
+            s_eff,
+            sim,
+            path_score,
+            depth,
+            consolidated=props.consolidated,
+        )
         put(node)
         return node
 
@@ -401,10 +432,17 @@ def _beam_search(
                     )
             targets = chain if trace_history else chain[-1:]
             for props in targets:
-                s_eff = ff.s_effective(props.s, props.n_last_touched, n_now, config=ff_config)
+                s_eff = _s_eff(props, n_now, ff_config)
                 score = parent.path_score * transition_score(row.label, 0.0, s_eff, config)
                 node = ScoredNode(
-                    props.node_key, props.content, props.tau, s_eff, 0.0, score, depth
+                    props.node_key,
+                    props.content,
+                    props.tau,
+                    s_eff,
+                    0.0,
+                    score,
+                    depth,
+                    consolidated=props.consolidated,
                 )
                 added = put(node) or added
         if not added:
@@ -453,6 +491,7 @@ def _stage3_traverse(
                     n_last_touched=row["dst_n"],
                     content=row["dst_content"],
                     tau=row["dst_tau"],
+                    consolidated=bool(row["dst_consolidated"]),
                 ),
                 superseded_by=tuple(row["superseded_by"]),
             )
@@ -473,6 +512,7 @@ def _stage3_traverse(
                 n_last_touched=row["n"],
                 content=row["content"],
                 tau=row["tau"],
+                consolidated=bool(row["consolidated"]),
             ),
             tuple(row["superseded_by"]),
         )
@@ -613,11 +653,11 @@ def retrieve(
         ff_config=ff_config,
     )
 
-    # Stage 3 收敛后：第二次独立硬过滤（与 Stage 2 不合并）
+    # Stage 3 收敛后：第二次独立硬过滤（与 Stage 2 不合并；固化节点跳过丢弃判定）
     final = {
         key: node
         for key, node in pool.items()
-        if node.s_effective is None or node.s_effective >= theta
+        if node.s_effective is None or node.consolidated or node.s_effective >= theta
     }
     final_edges = sorted(
         (e for e in edges if e.out_key in final and e.in_key in final),

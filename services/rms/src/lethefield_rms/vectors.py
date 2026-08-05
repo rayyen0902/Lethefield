@@ -75,6 +75,20 @@ def index_vector(
     )
 
 
+def delete_vector(
+    es: Elasticsearch,
+    *,
+    space_id: str,
+    node_key: str,
+    index: str = VECTORS_INDEX,
+    refresh: bool = True,
+) -> None:
+    """删除向量文档（M6 归档时清理，防 Stage 2 召回死引用）；不存在则静默忽略。"""
+    es.options(ignore_status=404).delete(
+        index=index, id=f"{space_id}:{node_key}", routing=space_id, refresh=refresh
+    )
+
+
 def knn_search(
     es: Elasticsearch,
     *,
