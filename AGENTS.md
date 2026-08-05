@@ -2,8 +2,8 @@
 
 ## 项目阶段
 
-M0（工程地基）、M1（存储基础设施）、M2（RMS 图 Schema）已完成并验证（本地 + GitHub Actions CI 全绿）。
-**下一个模块：M3 FF 计算引擎**（开发文档 §4：FF 现算 + δ 动态更新，衰减部分永不写回存储）。
+M0（工程地基）、M1（存储基础设施）、M2（RMS 图 Schema）、M3（FF 计算引擎）已完成并验证（本地 + GitHub Actions CI 全绿，M3 CI 待提交后确认）。
+**下一个模块：M4 检索流程（四阶段）**（开发文档 §5：带边子图召回、Stage 2/3 两次独立硬过滤、supersedes 重定向、ρ 只作用于硬过滤）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -21,6 +21,12 @@ M0（工程地基）、M1（存储基础设施）、M2（RMS 图 Schema）已完
   `writer.py` 是 M15 写入链地基（φ 初始化：n_last_touched=n_created、三计数器 0）。
   `ref_ex` 校验目前只覆盖 RMS 侧不变量，EX 侧 join 待 M10。
 - JanusGraph 顶点不支持 `v.both(Direction, label)` 直调，邻居扩展用 traversal 的 `both()` 步骤。
+- M3 FF 引擎定案：公式与 δ 逻辑单点在 `lethefield_rms.ff`（禁止其他模块内嵌 FF 公式副本，
+  tests/integration/ff_utils.py 也只是它的薄委托）；`n_star_cached` 存**绝对遗忘视界**
+  （n_last_touched + ceil(n*)，粗筛 `> $n_now` 才成立），任何 δ 调整立即重算；s 合法区间
+  [0,1]（设计未明文，FFConfig 可配）；截断必计 `lethefield_ff_s_clamp_total{bound}`。
+- `libs/metrics` 的 `registry=None` 是 prometheus_client 原义——**不注册**；模块级指标要显式传
+  `prometheus_client.REGISTRY`（服务暴露口 M12 统一接线）。
 - compose 里 Cassandra 必须显式设 `CASSANDRA_BROADCAST_RPC_ADDRESS`（官方镜像重启后会失效）。
 - spike 遗留容器（spike-elasticsearch 等）已停止但未删除，端口 8182/9042/9200 若被占先检查它们。
 

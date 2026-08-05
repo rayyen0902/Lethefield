@@ -616,10 +616,14 @@ version = "0.1.0"
 source = { editable = "services/rms" }
 dependencies = [
     { name = "lethefield-clients" },
+    { name = "lethefield-metrics" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "lethefield-clients", editable = "libs/clients" }]
+requires-dist = [
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-metrics", editable = "libs/metrics" },
+]
 
 [[package]]
 name = "multidict"

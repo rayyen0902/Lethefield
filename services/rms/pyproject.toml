@@ -1,14 +1,16 @@
 [project]
 name = "lethefield-rms"
 version = "0.1.0"
-description = "RMS 图 Schema 与写入链地基（M2：节点/边 schema、独立向量索引、writer）"
+description = "RMS 图 Schema 与写入链地基、FF 计算引擎（M2/M3）"
 requires-python = ">=3.12"
 dependencies = [
     "lethefield-clients",
+    "lethefield-metrics",
 ]
 
 [tool.uv.sources]
 lethefield-clients = { workspace = true }
+lethefield-metrics = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
