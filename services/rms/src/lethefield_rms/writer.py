@@ -12,6 +12,8 @@ import json
 
 from gremlin_python.driver.client import Client
 
+from lethefield_rms.ff import DEFAULT_CONFIG as _FF_CONFIG
+from lethefield_rms.ff import n_star_horizon
 from lethefield_rms.schema import EDGE_LABELS
 
 _CREATE_EVENT_SCRIPT = """
@@ -79,13 +81,18 @@ def create_event_node(
     n_created: int,
     agent_actor_id: str | None = None,
     attrs: dict | None = None,
-    n_star_cached: int = 0,
+    n_star_cached: int | None = None,
 ) -> None:
     """创建 event 顶点。agent_actor_id / attrs 为 None 时不落对应属性。
 
-    tau_ms / n_created / n_star_cached 以字符串绑定传输：gremlin_python 把 Python
-    int 一律序列化为 int32，超 2^31 直接客户端报错；Groovy 侧 `as long` 兼容字符串。
+    n_star_cached 为 None 时按 ff.n_star_horizon(s, n_created) 自动计算（M4 起）——
+    检索前置粗筛 `WHERE n_star_cached > $n_now` 对 0 值节点会全灭召回，写入链
+    默认必须给出正确视界。tau_ms / n_created / n_star_cached 以字符串绑定传输：
+    gremlin_python 把 Python int 一律序列化为 int32，超 2^31 直接客户端报错；
+    Groovy 侧 `as long` 兼容字符串。
     """
+    if n_star_cached is None:
+        n_star_cached = n_star_horizon(s, n_created, _FF_CONFIG.theta_base)
     _submit_ok(
         client,
         _CREATE_EVENT_SCRIPT,

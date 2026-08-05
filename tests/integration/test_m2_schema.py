@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import check_rms_schema  # noqa: E402
 from conftest import ES_GRAPH_URL, GREMLIN_ALIAS, GREMLIN_URL  # noqa: E402
 from lethefield_clients import es_client, gremlin_client  # noqa: E402
+from lethefield_rms.ff import n_star_horizon  # noqa: E402
 from lethefield_rms.schema import ensure_graph_schema  # noqa: E402
 from lethefield_rms.vectors import (  # noqa: E402  # noqa: E402
     VECTORS_INDEX,
@@ -93,7 +94,8 @@ def test_event_node_roundtrip(rms_graph):
         assert props["n_created"] == 100 + i
         # φ 初始化约定：n_last_touched = n_created，三计数器 0（M15 写入链约定）
         assert props["n_last_touched"] == 100 + i
-        assert props["n_star_cached"] == 0
+        # n_star_cached 默认按 ff.n_star_horizon 自动计算（M4 起，写入链正确性兜底）
+        assert props["n_star_cached"] == n_star_horizon(0.9 - i * 0.1, 100 + i, 0.3)
         assert props["reinforce_count"] == 0
         assert props["conflict_count"] == 0
         assert props["neglect_count"] == 0

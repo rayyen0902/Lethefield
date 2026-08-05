@@ -14,6 +14,8 @@ def vectors_mapping(dims: int) -> dict:
         "properties": {
             "node_key": {"type": "keyword"},
             "space_id": {"type": "keyword"},
+            # M4：Stage 2 关键词/属性检索由 ES 承担（设计文档 §5 v0.5），需要文本字段
+            "content": {"type": "text"},
             "v": {
                 "type": "dense_vector",
                 "dims": dims,
@@ -25,7 +27,10 @@ def vectors_mapping(dims: int) -> dict:
 
 
 def ensure_vectors_index(es: Elasticsearch, index: str = VECTORS_INDEX, dims: int = 4) -> None:
-    """幂等建索引；已存在时校验 mapping 与期望一致，不符抛 ValueError（不静默放行）。"""
+    """幂等建索引；已存在时校验 mapping 与期望一致，不符抛 ValueError（不静默放行）。
+
+    已有索引缺 content 字段时 put_mapping 补齐（M2 旧索引 → M4 形态的幂等迁移）。
+    """
     if not es.indices.exists(index=index):
         es.indices.create(index=index, mappings=vectors_mapping(dims))
         return
@@ -40,6 +45,8 @@ def ensure_vectors_index(es: Elasticsearch, index: str = VECTORS_INDEX, dims: in
             f"索引 {index} 的 v 为 {v.get('type')!r}/dims={v.get('dims')}，"
             f"期望 'dense_vector'/dims={dims}"
         )
+    if "content" not in properties:
+        es.indices.put_mapping(index=index, properties={"content": {"type": "text"}})
 
 
 def index_vector(
@@ -48,14 +55,21 @@ def index_vector(
     space_id: str,
     node_key: str,
     vector: list[float],
+    content: str | None = None,
     index: str = VECTORS_INDEX,
     refresh: bool = True,
 ) -> None:
-    """写入向量文档：routing = space_id（custom routing 定案），doc id 含 space 前缀便于清理。"""
+    """写入向量文档：routing = space_id（custom routing 定案），doc id 含 space 前缀便于清理。
+
+    content 供 Stage 2 关键词检索（M4）；为 None 时不落该字段。
+    """
+    document = {"node_key": node_key, "space_id": space_id, "v": vector}
+    if content is not None:
+        document["content"] = content
     es.index(
         index=index,
         id=f"{space_id}:{node_key}",
-        document={"node_key": node_key, "space_id": space_id, "v": vector},
+        document=document,
         routing=space_id,
         refresh=refresh,
     )
@@ -83,6 +97,35 @@ def knn_search(
             "k": k,
             "num_candidates": max(k * 4, 20),
             "filter": {"term": {"space_id": space_id}},
+        },
+        routing=space_id,
+        size=k,
+    )
+    return [
+        {"node_key": hit["_source"]["node_key"], "score": hit["_score"]}
+        for hit in response["hits"]["hits"]
+    ]
+
+
+def keyword_search(
+    es: Elasticsearch,
+    *,
+    space_id: str,
+    query_text: str,
+    k: int,
+    index: str = VECTORS_INDEX,
+) -> list[dict]:
+    """关键词检索（M4 Stage 2 第二路）：match content + space_id term filter + routing。
+
+    与 knn_search 同款双机制隔离：routing 收拢分片、term filter 保证跨 space 零泄漏。
+    """
+    response = es.search(
+        index=index,
+        query={
+            "bool": {
+                "must": {"match": {"content": query_text}},
+                "filter": {"term": {"space_id": space_id}},
+            }
         },
         routing=space_id,
         size=k,
