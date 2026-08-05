@@ -7,6 +7,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "lethefield-api",
     "lethefield-auth-registry",
     "lethefield-clients",
     "lethefield-clock-monitor",
@@ -27,6 +28,7 @@ package = false
 members = ["libs/*", "ops/*", "services/*"]
 
 [tool.uv.sources]
+lethefield-api = { workspace = true }
 lethefield-auth-registry = { workspace = true }
 lethefield-clients = { workspace = true }
 lethefield-clock-monitor = { workspace = true }

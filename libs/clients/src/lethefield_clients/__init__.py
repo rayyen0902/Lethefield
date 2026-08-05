@@ -17,6 +17,7 @@ from lethefield_clients.control_plane import (
 from lethefield_clients.factories import (
     cassandra_cluster,
     es_client,
+    ex_cassandra_cluster,
     gremlin_client,
     pg_connection,
     pulsar_client,
@@ -34,6 +35,7 @@ __all__ = [
     "WatermarkState",
     "cassandra_cluster",
     "es_client",
+    "ex_cassandra_cluster",
     "gremlin_client",
     "pg_connection",
     "pulsar_client",

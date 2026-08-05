@@ -2,8 +2,8 @@
 
 ## 项目阶段
 
-M0（工程地基）、M1（存储基础设施）、M2（RMS 图 Schema）、M3（FF 计算引擎）已完成并验证（本地 + GitHub Actions CI 全绿，M3 CI 待提交后确认）。
-**下一个模块：M4 检索流程（四阶段）**（开发文档 §5：带边子图召回、Stage 2/3 两次独立硬过滤、supersedes 重定向、ρ 只作用于硬过滤）。
+M0–M5（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层）已完成并验证（M0–M3 CI 全绿，M4/M5 CI 待提交后确认）。
+**下一个模块：M6 FS sweep worker**（开发文档 §7：忽视惩罚按区间幂等、归档/固化/删除三条独立流程、n_star 顺带刷新、sweep 纳入 Dead Man's Switch）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -27,6 +27,21 @@ M0（工程地基）、M1（存储基础设施）、M2（RMS 图 Schema）、M3�
   [0,1]（设计未明文，FFConfig 可配）；截断必计 `lethefield_ff_s_clamp_total{bound}`。
 - `libs/metrics` 的 `registry=None` 是 prometheus_client 原义——**不注册**；模块级指标要显式传
   `prometheus_client.REGISTRY`（服务暴露口 M12 统一接线）。
+- M4 检索定案：`lethefield_rms.retrieve` 四阶段（RRF 不掺 s、两次独立硬过滤不合并）；
+  `_stage3_traverse` **签名无 es 无 rho**——"Stage 3 不访问 ES"与"ρ 不影响软惩罚"靠签名物理隔离；
+  λ1·φ = 边类型先验（占位 causal 1.0/semantic 0.8/temporal 0.6，实体边不作扩展路径、实体叶子收敛后挂回）；
+  λ2·sim 方案 A（锚点=RRF 分、扩展节点=0；方案 B 继承父 sim 衰减留待效果验证后探索）；
+  占位参数集中在 `RetrieveConfig`。`rms_vectors` 已加 `content` 文本字段（Stage 2 关键词一路）。
+  writer 的 `n_star_cached` 默认自动按 `n_star_horizon` 计算（传 0/不填会让粗筛全灭召回）。
+- M5 接口层定案：`services/api`（lethefield-api）。契约 1/3 已在代码冻结——EX 事件两表
+  （`ex_{space_id}` keyspace：experience_events 经验事件推进 n / meta_events 元事件不推进），
+  JWT claims `account_id/space_id[]/agent_actor_id/scope[]`（HS256 + env LETHEFIELD_JWT_SECRET，
+  签发属 M16）；请求体带 `agent_actor_id` 一律 400 actor_spoof（fail-closed）；图名 = space_id；
+  错误码 `{error:{code,message}}`（unauthorized/forbidden_scope/forbidden_space/actor_spoof/
+  bad_request/not_found/rate_limited/internal）；FF 内部字段一律 debug scope 才出（含 reinforce 响应）。
+  space_id 命名约束 [a-z0-9_]≤40（EX keyspace，fail-closed 不改写）。
+- FastAPI 端点必须 sync def（不能 async）：gremlin_python 同步客户端内部 run_until_complete，
+  在事件循环里直接冲突；sync 端点由 FastAPI 放线程池执行。请求体用 `Annotated[dict, Body()]`。
 - compose 里 Cassandra 必须显式设 `CASSANDRA_BROADCAST_RPC_ADDRESS`（官方镜像重启后会失效）。
 - spike 遗留容器（spike-elasticsearch 等）已停止但未删除，端口 8182/9042/9200 若被占先检查它们。
 

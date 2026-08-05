@@ -16,6 +16,8 @@ from pulsar import Client
 _ENV = {
     "cassandra_hosts": ("LETHEFIELD_CASSANDRA_HOSTS", "localhost"),
     "cassandra_port": ("LETHEFIELD_CASSANDRA_PORT", "9042"),
+    "ex_cassandra_hosts": ("LETHEFIELD_EX_CASSANDRA_HOSTS", "localhost"),
+    "ex_cassandra_port": ("LETHEFIELD_EX_CASSANDRA_PORT", "9043"),
     "es_url": ("LETHEFIELD_ES_URL", "http://localhost:9200"),
     "gremlin_url": ("LETHEFIELD_GREMLIN_URL", "ws://localhost:8182/gremlin"),
     "pulsar_url": ("LETHEFIELD_PULSAR_URL", "pulsar://localhost:6650"),
@@ -39,6 +41,17 @@ def cassandra_cluster(hosts: str | None = None, port: int | None = None) -> Clus
     return Cluster(
         contact_points=parse_hosts(hosts or _env("cassandra_hosts")),
         port=port or int(_env("cassandra_port")),
+    )
+
+
+def ex_cassandra_cluster(hosts: str | None = None, port: int | None = None) -> Cluster:
+    """构造 EX 集群的 Cassandra Cluster（事件存储，M5 起）。
+
+    与 cell 集群（图存储后端）物理隔离是 M1 验证过的红线——工厂分开，防混用。
+    """
+    return Cluster(
+        contact_points=parse_hosts(hosts or _env("ex_cassandra_hosts")),
+        port=port or int(_env("ex_cassandra_port")),
     )
 
 

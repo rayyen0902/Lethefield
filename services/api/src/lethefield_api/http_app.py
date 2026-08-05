@@ -1,0 +1,107 @@
+"""FastAPI 装配层：四端点 + Bearer 鉴权 + 限流中间件挂载点。
+
+本层只做协议翻译与横切装配，业务逻辑全部在 service.py（换框架/手搓不动核心）。
+端点是 sync def（非 async）：FastAPI 把 sync 端点放到线程池执行——gremlin_python
+同步客户端内部 run_until_complete，在 async 端点的事件循环里会直接冲突报错。
+"""
+
+from typing import Annotated, Protocol
+
+from fastapi import Body, FastAPI, Request
+from fastapi.responses import JSONResponse
+
+from lethefield_api import service
+from lethefield_api.auth import Claims, reject_actor_spoof, verify_token
+from lethefield_api.errors import ApiError, ErrorCode
+from lethefield_api.service import ApiContext
+
+
+class RateLimiter(Protocol):
+    """限流中间件挂载点（M5 只定挂载点，阈值标定留待 M12/标定流程）。"""
+
+    def allow(self, claims: Claims, operation: str) -> bool: ...
+
+
+class NoopRateLimiter:
+    def allow(self, claims: Claims, operation: str) -> bool:
+        return True
+
+
+def _required(body: dict, field: str):
+    value = body.get(field)
+    if value is None:
+        raise ApiError(ErrorCode.BAD_REQUEST, f"缺少必填字段 {field!r}")
+    return value
+
+
+def create_app(ctx: ApiContext, rate_limiter: RateLimiter | None = None) -> FastAPI:
+    limiter = rate_limiter or NoopRateLimiter()
+    app = FastAPI(title="lethefield-api", version="0.1.0")
+
+    @app.exception_handler(ApiError)
+    async def _api_error_handler(_request: Request, exc: ApiError) -> JSONResponse:
+        return JSONResponse(status_code=exc.http_status, content=exc.body())
+
+    def _claims(request: Request) -> Claims:
+        header = request.headers.get("authorization", "")
+        if not header.startswith("Bearer "):
+            raise ApiError(ErrorCode.UNAUTHORIZED, "缺少 Bearer 凭证")
+        return verify_token(header[len("Bearer ") :])
+
+    def _guard(request: Request, operation: str) -> Claims:
+        claims = _claims(request)
+        if not limiter.allow(claims, operation):  # 限流挂载点
+            raise ApiError(ErrorCode.RATE_LIMITED, "请求被限流")
+        return claims
+
+    @app.post("/memory/record")
+    def record_ep(request: Request, body: Annotated[dict, Body()]) -> dict:
+        claims = _guard(request, "record")
+        reject_actor_spoof(body)
+        return service.record(
+            ctx,
+            claims,
+            space_id=_required(body, "space_id"),
+            content=_required(body, "content"),
+            tau_ms=body.get("tau_ms"),
+        )
+
+    @app.post("/memory/flag_conflict")
+    def flag_conflict_ep(request: Request, body: Annotated[dict, Body()]) -> dict:
+        claims = _guard(request, "flag_conflict")
+        reject_actor_spoof(body)
+        return service.flag_conflict(
+            ctx,
+            claims,
+            space_id=_required(body, "space_id"),
+            content=_required(body, "content"),
+            ref_conflict=_required(body, "ref_conflict"),
+            tau_ms=body.get("tau_ms"),
+        )
+
+    @app.post("/memory/reinforce")
+    def reinforce_ep(request: Request, body: Annotated[dict, Body()]) -> dict:
+        claims = _guard(request, "reinforce")
+        reject_actor_spoof(body)
+        return service.reinforce(
+            ctx,
+            claims,
+            space_id=_required(body, "space_id"),
+            node_key=_required(body, "node_key"),
+        )
+
+    @app.post("/memory/retrieve")
+    def retrieve_ep(request: Request, body: Annotated[dict, Body()]) -> dict:
+        claims = _guard(request, "retrieve")
+        reject_actor_spoof(body)
+        return service.retrieve(
+            ctx,
+            claims,
+            space_id=_required(body, "space_id"),
+            query_text=body.get("query_text"),
+            query_vector=body.get("query_vector"),
+            rho=body.get("rho", 1.0),
+            trace_history=body.get("trace_history", False),
+        )
+
+    return app
