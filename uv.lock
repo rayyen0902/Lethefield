@@ -18,6 +18,7 @@ members = [
     "lethefield-logschema",
     "lethefield-metrics",
     "lethefield-rms",
+    "lethefield-scheduler",
 ]
 
 [[package]]
@@ -742,6 +743,7 @@ dev = [
     { name = "lethefield-logschema" },
     { name = "lethefield-metrics" },
     { name = "lethefield-rms" },
+    { name = "lethefield-scheduler" },
     { name = "pytest" },
     { name = "requests" },
     { name = "ruff" },
@@ -761,6 +763,7 @@ dev = [
     { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
     { name = "lethefield-rms", editable = "services/rms" },
+    { name = "lethefield-scheduler", editable = "services/scheduler" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "requests", specifier = ">=2.31" },
     { name = "ruff", specifier = ">=0.6" },
@@ -923,6 +926,29 @@ dependencies = [
 requires-dist = [
     { name = "lethefield-clients", editable = "libs/clients" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
+]
+
+[[package]]
+name = "lethefield-scheduler"
+version = "0.1.0"
+source = { editable = "services/scheduler" }
+dependencies = [
+    { name = "cassandra-driver" },
+    { name = "elasticsearch" },
+    { name = "gremlinpython" },
+    { name = "lethefield-clients" },
+    { name = "lethefield-rms" },
+    { name = "requests" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cassandra-driver", specifier = ">=3.29" },
+    { name = "elasticsearch", specifier = ">=8.13" },
+    { name = "gremlinpython", specifier = ">=3.7" },
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-rms", editable = "services/rms" },
+    { name = "requests", specifier = ">=2.31" },
 ]
 
 [[package]]

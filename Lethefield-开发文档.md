@@ -406,12 +406,18 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 - `space_type` 枚举字段（如 `companion` / `project`）：仅作产品/运营维度标注，**不得影响 RMS/FS/SS 核心逻辑**——核心服务代码中不应出现按 `space_type` 分支的业务逻辑。
 
 ### 验收标准
-- [ ] 所有存储层（Cassandra/ES/Pulsar）的分区键/routing 键/namespace 键均为 `space_id`，代码库中不存在以 `agent_id` 作为分区键的残留路径。
-- [ ] 同一 `space_id` 下不同 `agent_actor_id` 的写入正确共享同一份 EX/RMS，且各自事件可按 `agent_actor_id` 过滤查看来源。
-- [ ] 核心服务（RMS/FS/SS）代码扫描：无 `space_type` 分支逻辑。
+- [x] 所有存储层的分区键/routing 键均为 `space_id`，代码库中不存在以 `agent_id` 作为分区键的残留路径（Cassandra/ES 已验证；Pulsar namespace 随 M10 落地时与 C 协作验收）。
+- [x] 同一 `space_id` 下不同 `agent_actor_id` 的写入正确共享同一份 EX/RMS，且各自事件可按 `agent_actor_id` 过滤查看来源。
+- [x] 核心服务（RMS/FS/SS）代码扫描：无 `space_type` 分支逻辑。
 
 ### 明确不做
 - 不为 C 端与开发者场景设计不同的底层存储机制——两端共用同一套记忆空间抽象。
+
+### 实现定案（v1.2，随代码落地入档）
+- **space_id 字符集正式定义**：`[a-z0-9_]、≤40 字符`（M5 起 ex_n 的 fail-closed 行为转正，已建 space 零迁移）。单点 = `libs/clients/spaces.py` 的 `validate_space_id`（`SPACE_ID_MAX_LEN`），四种存储命名共用：EX keyspace（`ex_n.keyspace_name` 委托）、RMS 图名（= space_id）、ES routing、Pulsar namespace（M10）。fail-closed 语义不变：不合法直接拒绝，不静默改写（防两 space 映射同一存储名造成跨 space 混流）。
+- **API 入口防线**：service 四操作（record/flag_conflict/reinforce/retrieve）在 `require_space` 后统一 `_require_valid_space`，非法 space_id 一律 400 `bad_request`、零副作用（不触图名/keyspace 命名路径）。
+- **`space_type` 落点**：`SpaceType` 枚举（`companion`/`project`，spaces.py）+ `SpaceMapping.space_type` 可选注解字段（默认 None，向后兼容 M0 冻结接口；M9 映射表沿用）。仅产品/运营标注，核心服务零引用。
+- **验收落点**：多写入者共享 EX/RMS + 来源过滤 + 非法 space_id 零副作用 = `tests/integration/test_m8_space_model.py`；「无 agent_id 分区键残留」「核心服务无 space_type 引用」= `scripts/check_space_model.py` 静态巡检（不起栈，已接 ci.sh；space_type 仅允许出现于 libs/clients 与巡检脚本自身）。
 
 ---
 

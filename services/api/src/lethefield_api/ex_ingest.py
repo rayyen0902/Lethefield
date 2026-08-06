@@ -18,7 +18,14 @@ from datetime import UTC, datetime, timedelta
 
 import redis as redis_lib
 from cassandra.cluster import Session
-from lethefield_clients.ex_n import EXPERIENCE_TABLE, META_TABLE, keyspace_name, n_key, n_now
+from lethefield_clients.ex_n import (
+    EXPERIENCE_TABLE,
+    META_TABLE,
+    ensure_ex_keyspace,  # noqa: F401  (re-export，M9 DDL 单点迁入 ex_n)
+    keyspace_name,
+    n_key,
+    n_now,
+)
 
 __all__ = [
     "EXPERIENCE_TABLE",
@@ -34,46 +41,6 @@ __all__ = [
 # reinforce 时间窗合并窗口（M7 定案，占位 60s，§20 待标定）：窗口内同节点多次强化
 # 合并为一笔元事件（count 累加），控制 EX 写放大；重建精度降至窗口粒度，是可接受设计。
 REINFORCE_MERGE_WINDOW_MS = 60_000
-
-
-def ensure_ex_keyspace(session: Session, space_id: str) -> None:
-    """幂等建 EX keyspace + 两表（M10 开通流水线 EX 步的雏形，届时直接复用）。"""
-    ks = keyspace_name(space_id)
-    session.execute(
-        f"CREATE KEYSPACE IF NOT EXISTS {ks} "
-        "WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
-    )
-    # 经验事件：n 即主键（space 内单调），MAX(n) 可用于 n_now 重建
-    session.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {ks}.{EXPERIENCE_TABLE} (
-            n bigint PRIMARY KEY,
-            event_id uuid,
-            content text,
-            agent_actor_id text,
-            account_id text,
-            tau_ms bigint,
-            ref_conflict text,
-            created_at timestamp
-        )
-        """
-    )
-    # 元事件：按 node_key 分区（M7 合并器按节点查窗口内 reinforce），不持有 n
-    session.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {ks}.{META_TABLE} (
-            node_key text,
-            created_at timestamp,
-            event_id uuid,
-            meta_type text,
-            count int,
-            n_at_event bigint,
-            agent_actor_id text,
-            account_id text,
-            PRIMARY KEY ((node_key), created_at, event_id)
-        )
-        """
-    )
 
 
 def append_experience(

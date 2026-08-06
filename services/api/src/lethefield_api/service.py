@@ -9,7 +9,9 @@
 - reinforce 不触发 consolidation worker：本模块不依赖 Pulsar/consolidation 任何入口
   （结构性保证，集成测试断言）。
 
-约定：图名 = space_id（每 space 一图；M9 调度器落地后改查映射表）。
+约定：图名 = space_id（M5 冻结契约不变）；M9 起解析必经映射缓存（MappingCache
+包装 MappingTableControlPlaneStore），未注册 space → 404——消除"绕过映射直连默认
+集群"的快路径。计算侧持缓存直连 Cell，调度器/控制面宕机不影响存量读写（§17.2）。
 n_now 由 EX 摄入路径维护（Redis），读取走 `ex_ingest.n_now`——调用方从不传 n。
 """
 
@@ -18,10 +20,20 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from cassandra.cluster import Session
+from cassandra.cluster import Cluster, Session
 from elasticsearch import Elasticsearch
 from gremlin_python.driver.client import Client as GremlinClient
-from lethefield_clients import es_client, ex_cassandra_cluster, gremlin_client, redis_client
+from lethefield_clients import (
+    MappingCache,
+    MappingTableControlPlaneStore,
+    SpaceNotFoundError,
+    cassandra_cluster,
+    es_client,
+    ex_cassandra_cluster,
+    gremlin_client,
+    redis_client,
+)
+from lethefield_clients.spaces import validate_space_id
 from lethefield_rms import ff
 from lethefield_rms.retrieve import RetrievalResult
 from lethefield_rms.retrieve import retrieve as rms_retrieve
@@ -29,6 +41,7 @@ from redis import Redis
 
 from lethefield_api import ex_ingest
 from lethefield_api.auth import Claims, has_debug, require_scope, require_space
+from lethefield_api.errors import ApiError, ErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +58,8 @@ class ApiContext:
     ex_session: Session
     redis: Redis
     meta_appender: MetaAppender
+    mapping_cache: MappingCache
+    control_cluster: Cluster | None = None  # 控制面独立连接（故障演练可与数据面隔离）
 
     @classmethod
     def from_env(cls) -> "ApiContext":
@@ -54,6 +69,11 @@ class ApiContext:
         ctx.ex_session = ex_cassandra_cluster().connect()
         ctx.redis = redis_client()
         ctx.meta_appender = _make_background_appender(ctx)
+        # 控制面独立 Cluster 连接：调度器/元数据故障面与图/EX 访问隔离（M9 演练前提）
+        ctx.control_cluster = cassandra_cluster()
+        store = MappingTableControlPlaneStore(ctx.control_cluster.connect())
+        store.ensure_tables()
+        ctx.mapping_cache = MappingCache(store)
         return ctx
 
 
@@ -75,9 +95,24 @@ def _make_background_appender(ctx: ApiContext) -> MetaAppender:
     return append
 
 
-def gname_of(space_id: str) -> str:
-    """图名 = space_id（约定；M9 调度器落地后改查 ControlPlaneStore 映射）。"""
-    return space_id
+def _resolve_gname(ctx: ApiContext, space_id: str) -> str:
+    """space → 图名解析（M9）：必经映射缓存，未注册 space 404 fail-closed。
+
+    图名约定 = space_id 不变；解析的意义是"该 space 已开通且归属已知 Cell"——
+    多 Cell 形态下映射的 cell_id 决定连接路由，本地单 Cell 形态下是存在性闸门。
+    """
+    try:
+        return ctx.mapping_cache.get_space_mapping(space_id).space_id
+    except SpaceNotFoundError:
+        raise ApiError(ErrorCode.NOT_FOUND, f"space {space_id} 未开通或已注销") from None
+
+
+def _require_valid_space(space_id: str) -> None:
+    """space_id 字符集 fail-closed（M8）：非法值 400，不直达图名/keyspace 命名路径。"""
+    try:
+        validate_space_id(space_id)
+    except ValueError as exc:
+        raise ApiError(ErrorCode.BAD_REQUEST, str(exc)) from None
 
 
 def record(
@@ -91,6 +126,8 @@ def record(
     """memory.record：转发 EX 摄入，同步等 EX ack 后返回；不直接操作 RMS 图。"""
     require_scope(claims, "record")
     require_space(claims, space_id)
+    _require_valid_space(space_id)
+    _resolve_gname(ctx, space_id)  # 未开通 space fail-closed（M9）
     event_id, n = ex_ingest.append_experience(
         ctx.ex_session,
         ctx.redis,
@@ -115,6 +152,8 @@ def flag_conflict(
     """memory.flag_conflict：纠错 = 携带被纠正引用的普通经验事件，走正常入链。"""
     require_scope(claims, "flag_conflict")
     require_space(claims, space_id)
+    _require_valid_space(space_id)
+    _resolve_gname(ctx, space_id)  # 未开通 space fail-closed（M9）
     event_id, n = ex_ingest.append_experience(
         ctx.ex_session,
         ctx.redis,
@@ -135,9 +174,11 @@ def reinforce(ctx: ApiContext, claims: Claims, *, space_id: str, node_key: str) 
     """
     require_scope(claims, "reinforce")
     require_space(claims, space_id)
+    _require_valid_space(space_id)
+    gname = _resolve_gname(ctx, space_id)
     n_now = ex_ingest.n_now(ctx.redis, ctx.ex_session, space_id=space_id)
     state = ff.apply_reinforce(
-        ctx.gremlin, gname_of(space_id), space_id=space_id, node_key=node_key, n_now=n_now
+        ctx.gremlin, gname, space_id=space_id, node_key=node_key, n_now=n_now
     )
     ctx.meta_appender(
         space_id=space_id,
@@ -159,7 +200,7 @@ def reinforce(ctx: ApiContext, claims: Claims, *, space_id: str, node_key: str) 
     return result
 
 
-def _present_node(ctx: ApiContext, space_id: str, node, *, debug: bool) -> dict:
+def _present_node(ctx: ApiContext, gname: str, space_id: str, node, *, debug: bool) -> dict:
     """响应节点裁剪：默认只给内容+关系+brief；debug scope 附 φ_i 内部字段。
 
     debug 是低频诊断路径，φ_i 快照按节点 read_phi（N 次图往返可接受）。
@@ -174,9 +215,7 @@ def _present_node(ctx: ApiContext, space_id: str, node, *, debug: bool) -> dict:
         item["s_effective"] = node.s_effective
         item["relevance"] = node.relevance
         if node.s_effective is not None:  # 实体叶子无 φ
-            phi = ff.read_phi(
-                ctx.gremlin, gname_of(space_id), space_id=space_id, node_key=node.node_key
-            )
+            phi = ff.read_phi(ctx.gremlin, gname, space_id=space_id, node_key=node.node_key)
             item["phi"] = {
                 "s": phi.s,
                 "n_last_touched": phi.n_last_touched,
@@ -188,10 +227,12 @@ def _present_node(ctx: ApiContext, space_id: str, node, *, debug: bool) -> dict:
     return item
 
 
-def present(ctx: ApiContext, result: RetrievalResult, *, space_id: str, debug: bool) -> dict:
+def present(
+    ctx: ApiContext, result: RetrievalResult, *, gname: str, space_id: str, debug: bool
+) -> dict:
     """RetrievalResult → 对外响应（debug 裁剪规则的唯一实现点）。"""
     return {
-        "nodes": [_present_node(ctx, space_id, n, debug=debug) for n in result.nodes],
+        "nodes": [_present_node(ctx, gname, space_id, n, debug=debug) for n in result.nodes],
         "edges": [
             {"out_key": e.out_key, "in_key": e.in_key, "label": e.label} for e in result.edges
         ],
@@ -211,11 +252,13 @@ def retrieve(
     """memory.retrieve：M4 四阶段检索的外部入口（只读）；FF 字段按 debug scope 裁剪。"""
     require_scope(claims, "retrieve")
     require_space(claims, space_id)
+    _require_valid_space(space_id)
+    gname = _resolve_gname(ctx, space_id)
     n_now = ex_ingest.n_now(ctx.redis, ctx.ex_session, space_id=space_id)
     result = rms_retrieve(
         ctx.gremlin,
         ctx.es,
-        gname_of(space_id),
+        gname,
         space_id=space_id,
         query_text=query_text,
         query_vector=query_vector,
@@ -223,4 +266,4 @@ def retrieve(
         rho=rho,
         trace_history=trace_history,
     )
-    return present(ctx, result, space_id=space_id, debug=has_debug(claims))
+    return present(ctx, result, gname=gname, space_id=space_id, debug=has_debug(claims))

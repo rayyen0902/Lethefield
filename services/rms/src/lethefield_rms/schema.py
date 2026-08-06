@@ -59,7 +59,8 @@ COMPOSITE_INDEXES: tuple[tuple[str, str, bool], ...] = (
     ("byEntityKey", "entity_key", False),
 )
 
-# 图后端指向 compose 内的 cell Cassandra + 图索引 ES（服务名，JG 容器内可达）
+# 图后端默认指向 compose 内的 cell Cassandra + 图索引 ES（服务名，JG 容器内可达）；
+# M9 起调度器开通时按映射表 Cell endpoints 推导覆盖（backend_props 参数）。
 GRAPH_BACKEND_PROPS: dict[str, str] = {
     "storage.backend": "cql",
     "storage.hostname": "cassandra-cell",
@@ -69,19 +70,33 @@ GRAPH_BACKEND_PROPS: dict[str, str] = {
 }
 
 
+def backend_props_of(endpoints: dict[str, str]) -> dict[str, str]:
+    """从 Cell endpoints（JanusGraph 容器视角）推导建图配置（M9，调度器用）。"""
+    return {
+        "storage.backend": "cql",
+        "storage.hostname": endpoints["cassandra"],
+        "index.search.backend": "elasticsearch",
+        "index.search.hostname": endpoints["es"],
+        "cache.db-cache": "false",
+    }
+
+
 def ensure_schema_script() -> str:
     """读取 ensure_schema.groovy 资源文本。"""
     return resources.files("lethefield_rms").joinpath("ensure_schema.groovy").read_text()
 
 
-def ensure_graph_schema(client: Client, gname: str) -> None:
-    """对图 gname 幂等落地全量 RMS schema（图不存在则按 GRAPH_BACKEND_PROPS 建图）。"""
+def ensure_graph_schema(
+    client: Client, gname: str, backend_props: dict[str, str] | None = None
+) -> None:
+    """对图 gname 幂等落地全量 RMS schema（图不存在则按 backend_props 建图，
+    缺省 GRAPH_BACKEND_PROPS；M9 起调度器按 Cell endpoints 传入）。"""
     result = (
         client.submit(
             ensure_schema_script(),
             {
                 "gname": gname,
-                "backendProps": GRAPH_BACKEND_PROPS,
+                "backendProps": backend_props or GRAPH_BACKEND_PROPS,
                 "keySpecs": [[n, t] for n, t in EXPECTED_PROPERTY_KEYS.items()],
                 "edgeNames": list(EDGE_LABELS),
                 "indexSpecs": [[name, key, unique] for name, key, unique in COMPOSITE_INDEXES],

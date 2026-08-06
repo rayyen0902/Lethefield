@@ -17,8 +17,8 @@ from types import SimpleNamespace
 import pytest
 from conftest import ES_GRAPH_URL, GREMLIN_ALIAS, GREMLIN_URL
 from lethefield_clients import (
+    MappingTableControlPlaneStore,
     SpaceMapping,
-    StaticControlPlaneStore,
     cassandra_cluster,
     ensure_archive_table,
     es_client,
@@ -328,7 +328,9 @@ def test_meta_event_does_not_advance_n(stack, space):
 def test_worker_run_once_and_liveness(stack, space):
     """run_once 写心跳 + 每 space 计数；心跳过期 → liveness 巡检退出码 1。"""
     _make_node(stack, space, "wk", s=0.9, n=0, nstar=10)
-    store = StaticControlPlaneStore.local()
+    # M9 起枚举源 = 映射表 status=active（真实路径，验证 list_spaces 调用方零改动）
+    store = MappingTableControlPlaneStore(stack.cell_session)
+    store.ensure_tables()
     store.register_space(
         SpaceMapping(
             space_id=space,
@@ -342,6 +344,7 @@ def test_worker_run_once_and_liveness(stack, space):
         store, stack.client, stack.ex_session, stack.cell_session, stack.es, stack.redis
     )
     assert space in results  # 图存在但无 ex:n 缓存 → n_now 从 EX MAX(n) 重建为 0，无触发
+    store.unregister_space(space)  # 不留 active 映射（后续模块的 sweep 枚举会扫到）
 
     # 心跳已写：全局 + 每 space
     assert stack.redis.get(HEARTBEAT_KEY) is not None

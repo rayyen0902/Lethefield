@@ -2,11 +2,12 @@
 
 ## 项目阶段
 
-M0–M7（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
-FS sweep worker / 纠错机制）已完成并验证（M0–M7 CI 全绿）。
-**下一个模块：M8 记忆空间模型与鉴权（space_id）**（开发文档 §9：顶层分区键从 agent_id
-改为 space_id 的模型落地；EX/Pulsar 侧分区键验收与 C 协作；space_id 字符集约束 M8 正式定义，
-现行为 libs/clients ex_n 的 fail-closed [a-z0-9_]≤40）。
+M0–M9（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
+FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租户调度器）已完成并验证
+（M0–M9 CI 全绿）。
+**下一个模块：M10 EX 存储与 Pulsar 归属 + 三存储生命周期流水线**（开发文档 §11：
+EX 集群池与 Cell 物理独立验收、开通/迁移/注销流水线终版、训练管线销毁广播真实接口
+（M9 留的注入点）、EX 摄入 Dead Man's Switch、跨 Cell 迁移演练实测只读窗口）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -64,6 +65,29 @@ FS sweep worker / 纠错机制）已完成并验证（M0–M7 CI 全绿）。
   忽视/固化/归档理想化 sweep 重推，`neglect_due`/`consolidate_due`/`archive_eligible` **单点在 ff**
   （已从 fs/sweep 迁入，sweep re-export）。重建边只建双端在热图的（归档节点不落图，addEdge 会炸）；
   重建图顶点 space_id = 源 space，与目标图名不同。
+- M8 空间模型定案：space_id 字符集 **[a-z0-9_]≤40 正式定案**，单点 `libs/clients/spaces.py`
+  `validate_space_id`（EX keyspace / 图名 / ES routing / Pulsar namespace 四处命名共用；
+  `ex_n.keyspace_name` 只是委托）；API 四操作入口 `_require_valid_space` fail-closed
+  （非法 space_id 400 bad_request 零副作用）。`SpaceType`（companion/project）+
+  `SpaceMapping.space_type` 可选注解——仅产品/运营标注，核心服务禁止引用/分支，
+  `scripts/check_space_model.py` 静态巡检强制（含 agent_id 分区键残留扫描，已接 ci.sh）。
+  集成测试的 JWT 密钥（LETHEFIELD_JWT_SECRET 是进程级 env）必须在模块 fixture 里设定——
+  import 时设定会被后导入模块覆盖，先执行模块 token 全 401（M8 实测踩坑）。
+- M9 Cell 架构定案：`services/scheduler`（lethefield-scheduler）。映射表 =
+  `lethefield_control` keyspace（cassandra-cell 上专用 keyspace，直写 CQL 不经 JanusGraph；
+  spaces/cells 两表），正式实现 `MappingTableControlPlaneStore`（过渡期
+  ExKeyspaceControlPlaneStore 已删除；`list_spaces` 按 status=active 过滤，FS/纠错调用方
+  零改动）。备份/导出单点 `libs/clients/control_backup.py`（JSONL 全量含非 active，
+  restore 覆盖写幂等，1.0 验收硬指标）。计算侧 `MappingCache`（TTL + **控制面故障服务
+  陈旧值**，负缓存语义同）——四操作经 `_resolve_gname` 解析，未注册 space 404 fail-closed。
+  开通顺序 EX → Pulsar → RMS 建图+schema → 注册（先存储后注册，失败逆序回滚）；
+  建图 backend props 按 Cell endpoints 推导（`lethefield_rms.schema.backend_props_of`，
+  ensure_graph_schema 第三参注入）。注销五步严格按序：标 destroying →
+  **close + removeConfiguration 驱逐计算实例（红线 5，先于任何 DROP）** → rms_vectors 文档
+  → DROP 图 keyspace → 删 namespace → 最后 DROP EX keyspace → 广播（`broadcast_destroy`
+  注入点，M10 接训练管线真接口）→ 清映射 + 无残留校验。水位 0.7/0.9 初值（SchedulerConfig），
+  纯函数 `state_of` + 注入式 `refresh_cell`（disk/heap 单节点无探针置 0，模拟负载走注入）。
+  Pulsar namespace 经 admin REST（tenant 固定 `lethefield`，namespace = space_id）。
 - compose 里 Cassandra 必须显式设 `CASSANDRA_BROADCAST_RPC_ADDRESS`（官方镜像重启后会失效）。
 - 测试图只 close 不 DROP 会累积 keyspace/table 拖垮 Cassandra schema 操作（实测 51 keyspace/463 表时
   图创建连锁超时）——套件莫名变慢/超时先 `make reset` 再怀疑代码。
@@ -71,6 +95,10 @@ FS sweep worker / 纠错机制）已完成并验证（M0–M7 CI 全绿）。
   JanusGraph 已配 `graph.replace-instance-if-exists=true` 与 `evaluationTimeout: 180000`
   （容器重建撞实例注册冲突 / 冷图创建在全量负载下超默认 30s，两处实测）。
 - spike 遗留容器（spike-elasticsearch 等）已停止但未删除，端口 8182/9042/9200 若被占先检查它们。
+- colima VM 内存不足会被内核 OOM killer 杀 JanusGraph（exit 137，dmesg 可见
+  "Out of memory: Killed process (java)"）——表现为 gremlin 连接拒绝、后续模块连锁
+  ERROR。宿主机 16GB 下 VM 已从 8GiB 调到 **10GiB**（M9 全量 CI 实测踩坑，2026-08-06）；
+  再发生先看 dmesg，别先怀疑代码。
 
 ## 常用命令
 
@@ -90,9 +118,17 @@ FS sweep worker / 纠错机制）已完成并验证（M0–M7 CI 全绿）。
 | `uv run python -m lethefield_fs.liveness` | M6：sweep 存活性巡检（Dead Man's Switch），超窗口退出码 1 告警 |
 | `uv run python -m lethefield_rms.corrections [--space S]` | M7：纠错处理器单轮（扫 EX ref_conflict → supersedes 边 + −0.5，幂等） |
 | `uv run python -m lethefield_rms.rebuild <space> [--target-gname G]` | M7：EX 重放重建 RMS（图结构 + δ 历史 + supersedes + archived_nodes） |
+| `uv run python scripts/check_space_model.py` | M8：空间模型巡检（agent_id 分区键残留 + 核心服务 space_type 引用扫描，不起栈） |
+| `uv run python -m lethefield_scheduler bootstrap` | M9：建控制面表 + 注册本地 Cell（幂等） |
+| `uv run python -m lethefield_scheduler provision <space> [--tier T]` | M9：开通 space（EX → Pulsar → RMS → 注册，失败回滚） |
+| `uv run python -m lethefield_scheduler destroy <space>` | M9：注销 space（先驱逐计算实例再删存储，无残留校验） |
+| `uv run python -m lethefield_scheduler export <file>` / `restore <file>` | M9：映射表备份 / 恢复（1.0 验收硬指标） |
+| `uv run python -m lethefield_scheduler watermark [--cell ID]` / `list` | M9：水位刷新 / 映射一览 |
 
 ## 约定
 
+- 升级确认边界：只有**设计未覆盖的分支**（语义、契约、schema、数据归属、红线相关）才升级参谋会话确认；环境重置、依赖微调、重构手法、测试组织等纯工程项自主决定（口诀："改错了要不要动文档？要动文档的升级，只动代码的自主"）。
+- 集成测试前统一 `make reset` 清卷重起：dev 卷内测试图均为一次性产物，历史 keyspace 累积是超时/抖动来源；reset 后 schema 由 CI 流程自动重建。执行前确认无进行中的调试依赖卷数据、spike 遗留容器未占端口。
 - Python 统一（uv workspace，>=3.12）；服务 = 进程边界，共享代码只允许 `libs/` 三样。
 - 所有存储访问必须经 `libs/clients` 的 `ControlPlaneStore` 抽象，禁止绕行直连。
 - 指标命名 `lethefield_<域>_<名称>_<单位>`；标签白/黑名单由 `libs/metrics` 强制，

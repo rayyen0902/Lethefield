@@ -11,8 +11,11 @@ echo "==> ruff check & format"
 uv run ruff check .
 uv run ruff format --check .
 
-echo "==> unit tests (libs + ops)"
-uv run pytest libs ops -q
+echo "==> unit tests (libs + ops + services)"
+uv run pytest libs ops services -q
+
+echo "==> M8 space model check"
+uv run python scripts/check_space_model.py
 
 echo "==> docker compose up"
 docker compose up -d

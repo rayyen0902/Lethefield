@@ -48,6 +48,6 @@ bash scripts/measure_restart_baseline.sh       # 重启至可服务时间基线�
 ## 硬约束（开发文档 M0，违反即评审不通过）
 
 - 共享库只放 `libs/` 三样，禁止各服务重复造轮子。
-- 所有存储访问必须经 `ControlPlaneStore` 抽象（M0 冻结接口，M9 落地正式实现）。
+- 所有存储访问必须经 `ControlPlaneStore` 抽象（M0 冻结接口，M9 已落地映射表正式实现）。
 - 聚合指标标签禁止出现 `space_id` / `node_key`（libs/metrics 代码层强制）。
 - M0 不写任何 EX/RMS/SS/FS 业务逻辑。

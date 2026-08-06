@@ -1,11 +1,11 @@
 """FS sweep worker 主循环（M6）。
 
-每轮：list_spaces()（ControlPlaneStore 抽象——过渡期 ExKeyspaceControlPlaneStore 从
-EX keyspace 元数据推导，M9 切调度器映射表，本文件零改动）→ 逐 space sweep_space →
+每轮：list_spaces()（ControlPlaneStore 抽象——M9 起 MappingTableControlPlaneStore
+按映射表 status=active 过滤，本文件调用接口零改动）→ 逐 space sweep_space →
 写 Redis 心跳（全局 + 每 space）。停摆检测由 liveness 巡检承担（Dead Man's Switch，
 sweep 停摆 = 忽视惩罚静默失效，设计文档 §7.5.1 同构故障）。
 
-图名 = space_id（M5 定案约定，M9 调度器落地后改查映射表）。
+图名 = space_id（M5 冻结契约；sweep 枚举源即映射表 active 集合）。
 """
 
 import argparse
@@ -16,8 +16,7 @@ from elasticsearch import Elasticsearch
 from gremlin_python.driver.client import Client
 from lethefield_clients import (
     ControlPlaneStore,
-    ExKeyspaceControlPlaneStore,
-    StaticControlPlaneStore,
+    MappingTableControlPlaneStore,
     cassandra_cluster,
     es_client,
     ex_cassandra_cluster,
@@ -106,7 +105,8 @@ def main(argv: list[str] | None = None) -> int:
     client = gremlin_client()
     es = es_client()
     redis = redis_client()
-    store = ExKeyspaceControlPlaneStore(ex_session, StaticControlPlaneStore.local())
+    store = MappingTableControlPlaneStore(cell_session)
+    store.ensure_tables()
     try:
         while True:
             results = run_once(store, client, ex_session, cell_session, es, redis, config=config)

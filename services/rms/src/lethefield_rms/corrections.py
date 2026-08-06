@@ -22,8 +22,8 @@ from dataclasses import dataclass
 from cassandra.cluster import Session
 from gremlin_python.driver.client import Client
 from lethefield_clients import (
-    ExKeyspaceControlPlaneStore,
-    StaticControlPlaneStore,
+    MappingTableControlPlaneStore,
+    cassandra_cluster,
     ex_cassandra_cluster,
     gremlin_client,
     list_experience_events,
@@ -179,12 +179,15 @@ def main() -> int:
     client = gremlin_client()
     ex_cluster = ex_cassandra_cluster()
     ex_session = ex_cluster.connect()
+    cell_cluster = cassandra_cluster()
     redis = redis_client()
     try:
         if args.space:
             spaces = [args.space]
         else:
-            store = ExKeyspaceControlPlaneStore(ex_session, StaticControlPlaneStore.local())
+            # M9 起枚举源 = 映射表 status=active 集合（调用接口零改动）
+            store = MappingTableControlPlaneStore(cell_cluster.connect())
+            store.ensure_tables()
             spaces = store.list_spaces()
         for space_id in spaces:
             stats = process_corrections(
@@ -201,6 +204,7 @@ def main() -> int:
     finally:
         client.close()
         ex_cluster.shutdown()
+        cell_cluster.shutdown()
         redis.close()
     return 0
 

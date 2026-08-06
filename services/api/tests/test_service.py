@@ -10,6 +10,7 @@ import pytest
 from lethefield_api import ex_ingest, service
 from lethefield_api.auth import Claims
 from lethefield_api.errors import ApiError, ErrorCode
+from lethefield_clients import MappingCache, SpaceMapping, StaticControlPlaneStore
 from lethefield_rms import ff
 from lethefield_rms.retrieve import EdgeRecord, NodeItem, RetrievalResult
 
@@ -40,6 +41,21 @@ class FakeSession:
         return SimpleNamespace(one=lambda: SimpleNamespace(mx=self._max_n))
 
 
+def _mapping_cache(*space_ids: str) -> MappingCache:
+    """单测映射缓存：Static 控制面 + 指定 space 已注册（M9 起解析是必经路径）。"""
+    store = StaticControlPlaneStore.local()
+    for sid in space_ids:
+        store.register_space(
+            SpaceMapping(
+                space_id=sid,
+                cell_id="cell-local",
+                ex_cluster_id="ex-local",
+                pulsar_cluster_id="pulsar-local",
+            )
+        )
+    return MappingCache(store)
+
+
 def _ctx(**overrides) -> service.ApiContext:
     ctx = service.ApiContext(
         gremlin=None,
@@ -47,6 +63,7 @@ def _ctx(**overrides) -> service.ApiContext:
         ex_session=FakeSession(),
         redis=FakeRedis(),
         meta_appender=lambda **kw: None,
+        mapping_cache=_mapping_cache("sp_1", "sp_2"),
     )
     for key, value in overrides.items():
         setattr(ctx, key, value)
@@ -145,6 +162,45 @@ class TestRetrievePresent:
         assert node["s_effective"] == 0.9
         assert node["phi"]["n_star_cached"] == 110
         assert node["phi"]["neglect_count"] == 1
+
+
+class TestSpaceIdValidation:
+    """M8：四操作入口 space_id 字符集 fail-closed，400 bad_request 且不触存储。"""
+
+    @pytest.mark.parametrize("bad", ["Bad_Space", "has-dash", "x" * 41])
+    def test_record_rejects_invalid_space_id(self, bad):
+        ctx = _ctx()
+        claims = Claims("acct-1", (bad,), "claude-code", ("record",))
+        with pytest.raises(ApiError) as exc:
+            service.record(ctx, claims, space_id=bad, content="x")
+        assert exc.value.code == ErrorCode.BAD_REQUEST
+        assert ctx.ex_session.executed == []  # 未产生任何 EX 写入
+
+    def test_retrieve_rejects_invalid_space_id(self):
+        ctx = _ctx()
+        claims = Claims("acct-1", ("Bad",), "claude-code", ("retrieve",))
+        with pytest.raises(ApiError) as exc:
+            service.retrieve(ctx, claims, space_id="Bad", query_text="q")
+        assert exc.value.code == ErrorCode.BAD_REQUEST
+
+
+class TestUnprovisionedSpace:
+    """M9：四操作经映射缓存解析，未注册 space → 404 not_found（fail-closed）。"""
+
+    def test_record_unprovisioned_404(self):
+        ctx = _ctx()
+        claims = Claims("acct-1", ("ghost",), "claude-code", ("record",))
+        with pytest.raises(ApiError) as exc:
+            service.record(ctx, claims, space_id="ghost", content="x")
+        assert exc.value.code == ErrorCode.NOT_FOUND
+        assert ctx.ex_session.executed == []  # 未产生任何 EX 写入
+
+    def test_retrieve_unprovisioned_404(self):
+        ctx = _ctx()
+        claims = Claims("acct-1", ("ghost",), "claude-code", ("retrieve",))
+        with pytest.raises(ApiError) as exc:
+            service.retrieve(ctx, claims, space_id="ghost", query_text="q")
+        assert exc.value.code == ErrorCode.NOT_FOUND
 
 
 class TestNNow:

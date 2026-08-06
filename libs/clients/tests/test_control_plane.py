@@ -47,6 +47,25 @@ def test_update_status(store):
     assert store.get_space_mapping("space-1").status == SpaceStatus.DESTROYING
 
 
+def test_space_type_annotation(store):
+    """M8：space_type 是 SpaceMapping 的可选产品/运营标注，核心服务不消费。"""
+    from lethefield_clients import SpaceType
+
+    assert _mapping("plain").space_type is None  # 默认 None，向后兼容
+    typed = SpaceMapping(
+        space_id="typed",
+        cell_id="cell-local",
+        ex_cluster_id="ex-local",
+        pulsar_cluster_id="pulsar-local",
+        space_type=SpaceType.PROJECT,
+    )
+    store.register_space(typed)
+    assert store.get_space_mapping("typed").space_type == SpaceType.PROJECT
+    # 状态更新不丢标注
+    store.update_space_status("typed", SpaceStatus.MIGRATING)
+    assert store.get_space_mapping("typed").space_type == SpaceType.PROJECT
+
+
 def test_get_cell(store):
     cell = store.get_cell("cell-local")
     assert cell.watermark_state == WatermarkState.OPEN
@@ -68,24 +87,43 @@ def test_list_spaces_static(store):
     assert store.list_spaces() == ["space-a", "space-b"]
 
 
-class _FakeExSession:
-    def __init__(self, keyspaces: list[str]) -> None:
-        self._rows = [type("Row", (), {"keyspace_name": k}) for k in keyspaces]
+def test_mapping_row_roundtrip():
+    """映射行 serde 单测：_row_to_mapping/_row_to_cell 与 Cassandra 行形状对齐。"""
+    from lethefield_clients.control_plane import _row_to_cell, _row_to_mapping
 
-    def execute(self, query: str):
-        assert "system_schema.keyspaces" in query
-        return self._rows
+    row = type(
+        "Row",
+        (),
+        {
+            "space_id": "s1",
+            "cell_id": "cell-local",
+            "ex_cluster_id": "ex-local",
+            "pulsar_cluster_id": "pulsar-local",
+            "status": "migrating",
+            "tier": "hot",
+            "space_type": None,
+        },
+    )()
+    mapping = _row_to_mapping(row)
+    assert mapping.status == SpaceStatus.MIGRATING
+    assert mapping.tier == Tier.HOT
+    assert mapping.space_type is None
 
+    cell_row = type(
+        "Row",
+        (),
+        {
+            "cell_id": "cell-local",
+            "endpoints": {"cassandra": "cassandra-cell"},
+            "capacity": {"keyspaces": 0.5},
+            "watermark_state": "filling",
+        },
+    )()
+    cell = _row_to_cell(cell_row)
+    assert cell.watermark_state == WatermarkState.FILLING
+    assert cell.capacity == {"keyspaces": 0.5}
 
-def test_ex_keyspace_store_derives_spaces(store):
-    from lethefield_clients import ExKeyspaceControlPlaneStore
-
-    ex = ExKeyspaceControlPlaneStore(
-        _FakeExSession(["ex_alpha", "ex_beta", "system_schema", "rms_graph"]),
-        delegate=store,
-    )
-    assert ex.list_spaces() == ["alpha", "beta"]
-    # 非枚举方法委托给 delegate
-    ex.register_space(_mapping("alpha"))
-    assert ex.get_space_mapping("alpha").cell_id == "cell-local"
-    assert ex.list_cells() == store.list_cells()
+    empty_cell_row = type(
+        "Row", (), {"cell_id": "c", "endpoints": None, "capacity": None, "watermark_state": "open"}
+    )()
+    assert _row_to_cell(empty_cell_row).endpoints == {}

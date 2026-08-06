@@ -17,6 +17,9 @@ from conftest import ES_GRAPH_URL, GREMLIN_ALIAS, GREMLIN_URL
 from lethefield_api import ex_ingest, service
 from lethefield_api.auth import Claims
 from lethefield_clients import (
+    MappingCache,
+    SpaceMapping,
+    StaticControlPlaneStore,
     cassandra_cluster,
     es_client,
     ex_cassandra_cluster,
@@ -224,12 +227,23 @@ def test_reinforce_window_merge(stack, space):
     e1_id, _ = _ingest(stack, space, "hot fact")
     _write_node(stack, space, "hot", e1_id, s=0.5, n_created=1)
 
+    # M9：四操作经映射缓存解析——本用例只走 reinforce，注册到 Static 控制面即可
+    store = StaticControlPlaneStore.local()
+    store.register_space(
+        SpaceMapping(
+            space_id=space,
+            cell_id="cell-local",
+            ex_cluster_id="ex-local",
+            pulsar_cluster_id="pulsar-local",
+        )
+    )
     ctx = service.ApiContext(
         gremlin=stack.client,
         es=stack.es,
         ex_session=stack.ex_session,
         redis=stack.redis,
         meta_appender=lambda **kw: ex_ingest.append_meta(stack.ex_session, **kw),  # 注入同步实现
+        mapping_cache=MappingCache(store),
     )
     claims = Claims(
         account_id="m7-account",

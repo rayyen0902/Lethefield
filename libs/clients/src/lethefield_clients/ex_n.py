@@ -20,24 +20,62 @@ from datetime import datetime
 import redis as redis_lib
 from cassandra.cluster import Session
 
+from lethefield_clients.spaces import validate_space_id
+
 EX_KEYSPACE_PREFIX = "ex_"
 
-# 经验事件表名（表结构 DDL 仍在 ex_ingest 的 ensure_ex_keyspace，M10 扩展时同迁）
+# 经验事件表名（表结构 DDL 单点在本模块 ensure_ex_keyspace，M9 从 ex_ingest 迁入——
+# 调度器开通流水线需要 EX 步而不依赖 API 服务；ex_ingest 改委托 + re-export）
 EXPERIENCE_TABLE = "experience_events"
 # 元事件表名（表单点定义在此；ex_ingest 经此处 import，M7 起消费方共用）
 META_TABLE = "meta_events"
 
 
 def keyspace_name(space_id: str) -> str:
-    """EX keyspace 名。space_id 字符集约束由 M8 正式定义；此处 fail-closed：
-    不满足 [a-z0-9_]≤40 直接拒绝，不静默改写（防两个 space 映射到同一 keyspace）。"""
-    if (
-        not space_id
-        or len(space_id) > 40
-        or not all(c.islower() or c.isdigit() or c == "_" for c in space_id)
-    ):
-        raise ValueError(f"space_id {space_id!r} 不满足 EX keyspace 命名约束：[a-z0-9_]、≤40 字符")
+    """EX keyspace 名。space_id 字符集约束单点在 spaces.validate_space_id（M8 定案），
+    fail-closed：不合法直接拒绝，不静默改写（防两个 space 映射到同一 keyspace）。"""
+    validate_space_id(space_id)
     return f"{EX_KEYSPACE_PREFIX}{space_id}"
+
+
+def ensure_ex_keyspace(session: Session, space_id: str) -> None:
+    """幂等建 EX keyspace + 两表（M9 起为调度器开通流水线 EX 步的实现点）。"""
+    ks = keyspace_name(space_id)
+    session.execute(
+        f"CREATE KEYSPACE IF NOT EXISTS {ks} "
+        "WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+    )
+    # 经验事件：n 即主键（space 内单调），MAX(n) 可用于 n_now 重建
+    session.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {ks}.{EXPERIENCE_TABLE} (
+            n bigint PRIMARY KEY,
+            event_id uuid,
+            content text,
+            agent_actor_id text,
+            account_id text,
+            tau_ms bigint,
+            ref_conflict text,
+            created_at timestamp
+        )
+        """
+    )
+    # 元事件：按 node_key 分区（M7 合并器按节点查窗口内 reinforce），不持有 n
+    session.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {ks}.{META_TABLE} (
+            node_key text,
+            created_at timestamp,
+            event_id uuid,
+            meta_type text,
+            count int,
+            n_at_event bigint,
+            agent_actor_id text,
+            account_id text,
+            PRIMARY KEY ((node_key), created_at, event_id)
+        )
+        """
+    )
 
 
 def n_key(space_id: str) -> str:

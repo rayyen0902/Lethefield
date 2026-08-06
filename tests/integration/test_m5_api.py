@@ -30,6 +30,10 @@ from lethefield_api.http_app import create_app  # noqa: E402
 from lethefield_api.sdk import MemoryClient  # noqa: E402
 from lethefield_api.service import ApiContext, _make_background_appender  # noqa: E402
 from lethefield_clients import (  # noqa: E402
+    MappingCache,
+    MappingTableControlPlaneStore,
+    SpaceMapping,
+    cassandra_cluster,
     es_client,
     ex_cassandra_cluster,
     gremlin_client,
@@ -108,8 +112,26 @@ def stack():
     )
     redis.set(f"ex:n:{SPACE}", N_BASE)
 
+    # M9：四操作经映射缓存解析——夹具保留直接建存储，补"先存储后注册"的注册步
+    cell_cluster = cassandra_cluster()
+    store = MappingTableControlPlaneStore(cell_cluster.connect())
+    store.ensure_tables()
+    store.register_space(
+        SpaceMapping(
+            space_id=SPACE,
+            cell_id="cell-local",
+            ex_cluster_id="ex-local",
+            pulsar_cluster_id="pulsar-local",
+        )
+    )
+
     ctx = ApiContext(
-        gremlin=gremlin, es=es, ex_session=ex_session, redis=redis, meta_appender=lambda **kw: None
+        gremlin=gremlin,
+        es=es,
+        ex_session=ex_session,
+        redis=redis,
+        meta_appender=lambda **kw: None,
+        mapping_cache=MappingCache(store),
     )
     ctx.meta_appender = _make_background_appender(ctx)
     app = create_app(ctx)
@@ -119,6 +141,8 @@ def stack():
         )
     gremlin.submit("ConfiguredGraphFactory.close(gname); 'closed'", {"gname": SPACE}).all().result()
     ex_session.execute(f"DROP KEYSPACE IF EXISTS {keyspace_name(SPACE)}")  # EX 测试数据，可 DROP
+    store.unregister_space(SPACE)
+    cell_cluster.shutdown()
     gremlin.close()
     es.close()
     redis.delete(f"ex:n:{SPACE}")
