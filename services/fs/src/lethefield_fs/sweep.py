@@ -76,19 +76,10 @@ class SweepStats:
 
 # ---------------------------------------------------------------- 纯判定（可单测）
 
-
-def neglect_due(n_now: int, n_last_touched: int, neglect_count: int, n_neglect: int) -> bool:
-    """忽视区间判定：第 (neglect_count+1) 个 N_neglect 区间已完整跨过才触发。
-
-    区间幂等的来源：同一区间内重复执行本判定，结论不变；触发后 neglect_count+1，
-    下一触发点推到再下一个区间——重复 sweep/重跑不产生重复惩罚。
-    """
-    return n_now - n_last_touched >= (neglect_count + 1) * n_neglect
-
-
-def consolidate_due(reinforce_count: int, conflict_count: int, threshold: int) -> bool:
-    """固化判定：reinforce_count 达阈值且期间无 conflict（设计文档 §13.4）。"""
-    return reinforce_count >= threshold and conflict_count == 0
+# neglect_due / consolidate_due 单点在 lethefield_rms.ff（M7 起，记忆动力学判定归
+# FF 引擎，重放重建复用同一份）；此处 re-export 保持既有调用/测试导入不变。
+neglect_due = ff.neglect_due
+consolidate_due = ff.consolidate_due
 
 
 def refresh_due(n_now: int, n_star_cached: int, margin: int) -> bool:

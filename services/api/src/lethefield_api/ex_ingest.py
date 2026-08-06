@@ -6,22 +6,24 @@
 - 事件类型分层（§13.2）：**只有经验事件推进 n**（Redis `INCR ex:n:{space}` 分配，
   space 级单调）；元事件（reinforce 追加等）不分配 n、只留痕——否则"用得越多忘得越快"。
 - 同步写表返回 = §9.3 定案的"等 EX 落库确认后返回"（ack）。
-- 元事件 `count` 字段为 M7 时间窗合并预留（M5 恒 1，每笔一笔）。
+- 元事件 `count` 字段为时间窗合并服务（M7 起 reinforce 走窗口合并：窗口内同节点
+  多次强化合并为一笔、count 累加；纠错是经验事件不经此路径，每笔精确）。
 
 遗留加固点（M10）：Redis INCR 与 EX 写入的竞态（INCR 成功写失败会留 n 空洞——
 空洞不破坏单调性，可接受）；n_now 重建与并发 INCR 的竞态。
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import redis as redis_lib
 from cassandra.cluster import Session
-from lethefield_clients.ex_n import EXPERIENCE_TABLE, keyspace_name, n_key, n_now
+from lethefield_clients.ex_n import EXPERIENCE_TABLE, META_TABLE, keyspace_name, n_key, n_now
 
 __all__ = [
     "EXPERIENCE_TABLE",
     "META_TABLE",
+    "REINFORCE_MERGE_WINDOW_MS",
     "append_experience",
     "append_meta",
     "ensure_ex_keyspace",
@@ -29,7 +31,9 @@ __all__ = [
     "n_now",
 ]
 
-META_TABLE = "meta_events"
+# reinforce 时间窗合并窗口（M7 定案，占位 60s，§20 待标定）：窗口内同节点多次强化
+# 合并为一笔元事件（count 累加），控制 EX 写放大；重建精度降至窗口粒度，是可接受设计。
+REINFORCE_MERGE_WINDOW_MS = 60_000
 
 
 def ensure_ex_keyspace(session: Session, space_id: str) -> None:
@@ -96,6 +100,24 @@ def append_experience(
     return str(event_id), n
 
 
+def _merge_window_row(
+    session: Session,
+    ks: str,
+    *,
+    node_key: str,
+    meta_type: str,
+    now: datetime,
+    window_ms: int,
+):
+    """查窗口内该节点最新一笔同类元事件（合并候选）；无则 None。"""
+    since = now - timedelta(milliseconds=window_ms)
+    return session.execute(
+        f"SELECT node_key, created_at, event_id, meta_type, count FROM {ks}.{META_TABLE} "
+        "WHERE node_key = %s AND created_at >= %s ORDER BY created_at DESC LIMIT 1",
+        (node_key, since),
+    ).one()
+
+
 def append_meta(
     session: Session,
     *,
@@ -106,9 +128,27 @@ def append_meta(
     agent_actor_id: str,
     account_id: str,
     count: int = 1,
+    merge_window_ms: int | None = None,
 ) -> str:
-    """追加元事件（reinforce 等）：**不分配 n**——元事件只留痕、不推进事件距离。"""
+    """追加元事件（reinforce 等）：**不分配 n**——元事件只留痕、不推进事件距离。
+
+    时间窗合并（M7）：`merge_window_ms` 非 None 时，窗口内同节点同类事件合并为一笔——
+    同主键 UPDATE（count 累加、n_at_event 刷新），不产生新行。service.reinforce
+    传 `REINFORCE_MERGE_WINDOW_MS`；纠错是经验事件不经此路径（每笔必须精确）。
+    """
     ks = keyspace_name(space_id)
+    now = datetime.now(UTC)
+    if merge_window_ms is not None:
+        row = _merge_window_row(
+            session, ks, node_key=node_key, meta_type=meta_type, now=now, window_ms=merge_window_ms
+        )
+        if row is not None and row.meta_type == meta_type:
+            session.execute(
+                f"UPDATE {ks}.{META_TABLE} SET count = %s, n_at_event = %s "
+                "WHERE node_key = %s AND created_at = %s AND event_id = %s",
+                (row.count + count, n_at_event, node_key, row.created_at, row.event_id),
+            )
+            return str(row.event_id)
     event_id = uuid.uuid4()
     session.execute(
         f"INSERT INTO {ks}.{META_TABLE} "
@@ -116,7 +156,7 @@ def append_meta(
         "agent_actor_id, account_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         (
             node_key,
-            datetime.now(UTC),
+            now,
             event_id,
             meta_type,
             count,

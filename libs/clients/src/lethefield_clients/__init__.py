@@ -21,7 +21,17 @@ from lethefield_clients.control_plane import (
     Tier,
     WatermarkState,
 )
-from lethefield_clients.ex_n import EXPERIENCE_TABLE, keyspace_name, n_key, n_now
+from lethefield_clients.ex_n import (
+    EXPERIENCE_TABLE,
+    META_TABLE,
+    ExEvent,
+    MetaEvent,
+    keyspace_name,
+    list_experience_events,
+    list_meta_events,
+    n_key,
+    n_now,
+)
 from lethefield_clients.factories import (
     cassandra_cluster,
     es_client,
@@ -35,9 +45,12 @@ from lethefield_clients.factories import (
 __all__ = [
     "ARCHIVE_TABLE",
     "EXPERIENCE_TABLE",
+    "META_TABLE",
     "CellInfo",
     "ControlPlaneStore",
+    "ExEvent",
     "ExKeyspaceControlPlaneStore",
+    "MetaEvent",
     "SpaceMapping",
     "SpaceNotFoundError",
     "SpaceStatus",
@@ -51,6 +64,8 @@ __all__ = [
     "gremlin_client",
     "keyspace_name",
     "list_archived",
+    "list_experience_events",
+    "list_meta_events",
     "n_key",
     "n_now",
     "pg_connection",

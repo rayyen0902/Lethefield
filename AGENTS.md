@@ -2,10 +2,11 @@
 
 ## 项目阶段
 
-M0–M6（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
-FS sweep worker）已完成并验证（M0–M6 CI 全绿）。
-**下一个模块：M7 纠错机制（supersedes）**（开发文档 §8：纠错事件化、同一对节点幂等、
-reinforce 时间窗合并；重放重建脚本须复用 `ff.archive_eligible` 与 libs/clients archive 访问层）。
+M0–M7（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
+FS sweep worker / 纠错机制）已完成并验证（M0–M7 CI 全绿）。
+**下一个模块：M8 记忆空间模型与鉴权（space_id）**（开发文档 §9：顶层分区键从 agent_id
+改为 space_id 的模型落地；EX/Pulsar 侧分区键验收与 C 协作；space_id 字符集约束 M8 正式定义，
+现行为 libs/clients ex_n 的 fail-closed [a-z0-9_]≤40）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -54,6 +55,15 @@ reinforce 时间窗合并；重放重建脚本须复用 `ff.archive_eligible` �
   固化后 δ 不改 s、计数器照计（ff.compute_delta 单点）；物理删除不在 FS（整 space 销毁归 M9/M10）。
 - gremlin_python 反序列化的 Date 是 **naive datetime**（UTC 语义）：`.timestamp()` 前必须
   先 `replace(tzinfo=UTC)`，否则按本地时间解释（M6 归档快照踩坑）。
+- M7 纠错定案：`lethefield_rms.corrections` 扫 EX `ref_conflict` 事件，**单 tx 原子幂等**
+  （tx 内查 supersedes 边，已存在 → duplicate 零写入——边即幂等标记，无状态表）；新节点按
+  `ref_ex=event_id` 反查、旧节点按 `node_key=ref_conflict`，缺失即 pending。reinforce 时间窗合并
+  在 ex_ingest（`REINFORCE_MERGE_WINDOW_MS` 占位 60s，同主键 UPDATE 累加 count，不动契约 1 表结构）。
+  `lethefield_rms.rebuild` 从 EX 重放重建：初始 s 走注入 `s_resolver`（默认占位 1.0，M14 切
+  `scoring_result` 元事件——两档验收已入档）；node_key 由 `node_key_of` 单点生成（过渡约定，M15 对齐）；
+  忽视/固化/归档理想化 sweep 重推，`neglect_due`/`consolidate_due`/`archive_eligible` **单点在 ff**
+  （已从 fs/sweep 迁入，sweep re-export）。重建边只建双端在热图的（归档节点不落图，addEdge 会炸）；
+  重建图顶点 space_id = 源 space，与目标图名不同。
 - compose 里 Cassandra 必须显式设 `CASSANDRA_BROADCAST_RPC_ADDRESS`（官方镜像重启后会失效）。
 - 测试图只 close 不 DROP 会累积 keyspace/table 拖垮 Cassandra schema 操作（实测 51 keyspace/463 表时
   图创建连锁超时）——套件莫名变慢/超时先 `make reset` 再怀疑代码。
@@ -78,6 +88,8 @@ reinforce 时间窗合并；重放重建脚本须复用 `ff.archive_eligible` �
 | `uv run python scripts/check_rms_schema.py --graph <gname>` | M2：schema 巡检 + rms_vectors mapping + ref_ex 抽样 |
 | `uv run python -m lethefield_fs [--once]` | M6：FS sweep worker（--once 单轮，测试/巡检用） |
 | `uv run python -m lethefield_fs.liveness` | M6：sweep 存活性巡检（Dead Man's Switch），超窗口退出码 1 告警 |
+| `uv run python -m lethefield_rms.corrections [--space S]` | M7：纠错处理器单轮（扫 EX ref_conflict → supersedes 边 + −0.5，幂等） |
+| `uv run python -m lethefield_rms.rebuild <space> [--target-gname G]` | M7：EX 重放重建 RMS（图结构 + δ 历史 + supersedes + archived_nodes） |
 
 ## 约定
 

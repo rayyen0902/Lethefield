@@ -8,6 +8,8 @@
 4. ref_ex 抽样：event 顶点的 ref_ex 非空、为字符串、图内唯一。
    注意：ref_ex 的全链路追溯依赖 EX 事件存储（M10 才建），本脚本只覆盖 RMS 侧
    不变量；EX 侧 join 校验待 M10 补齐。
+5. M7 红线：图 schema 全量元素名扫描，不得存在任何"硬失效标志"字段
+   （tombstone/invalidated 等；supersedes 边记录事实、判断下沉检索策略）。
 
 用法：uv run python scripts/check_rms_schema.py --graph <gname>
 退出码：0 = 合规，1 = 存在失败项。
@@ -24,6 +26,7 @@ from lethefield_rms.schema import (
     EDGE_LABELS,
     EXPECTED_PROPERTY_KEYS,
     ensure_schema_script,
+    find_invalidation_flags,
 )
 from lethefield_rms.vectors import VECTORS_INDEX
 
@@ -56,6 +59,16 @@ report
 _SAMPLE_REF_EX_SCRIPT = """
 def t = ConfiguredGraphFactory.open(gname).traversal()
 t.V().has('node_type', 'event').limit(n).project('nk', 'rx').by('node_key').by('ref_ex').toList()
+"""
+
+# 全量元素名扫描（M7 红线：图 schema 不得含任何"硬失效标志"字段——supersedes 边
+# 记录事实、判断下沉检索策略；tombstone/invalidated 类命名出现即违规）
+_ALL_ELEMENT_NAMES_SCRIPT = """
+def mgmt = ConfiguredGraphFactory.open(gname).openManagement()
+def names = mgmt.getRelationTypes(org.janusgraph.core.PropertyKey.class)*.name()
+names.addAll(mgmt.getRelationTypes(org.janusgraph.core.EdgeLabel.class)*.name())
+mgmt.rollback()
+['names': names]
 """
 
 
@@ -133,6 +146,16 @@ def check_vectors_index(es: Elasticsearch, index: str = VECTORS_INDEX) -> list[s
     return failures
 
 
+def check_no_invalidation_flags(client: Client, gname: str) -> list[str]:
+    """M7 红线巡检：图 schema 全量元素名扫描，不得存在任何失效标志字段。"""
+    result = client.submit(_ALL_ELEMENT_NAMES_SCRIPT, {"gname": gname}).all().result()
+    names = [v for item in result for v in item.get("names", [])]
+    return [
+        f"图 {gname} 存在失效标志字段 {name!r}（M7 红线：不设硬失效标志）"
+        for name in find_invalidation_flags(names)
+    ]
+
+
 def sample_ref_ex(client: Client, gname: str, limit: int = 100) -> list[str]:
     """抽样校验 event 顶点的 ref_ex：非空、为字符串、图内唯一。
 
@@ -169,6 +192,7 @@ def main() -> int:
     client = gremlin_client()
     try:
         failures += inspect_graph(client, args.graph)
+        failures += check_no_invalidation_flags(client, args.graph)
         failures += sample_ref_ex(client, args.graph)
     except Exception as exc:  # gremlin 不可达时不放行，巡检必须明确结论
         failures.append(f"图侧检查失败（gremlin 不可达？图 {args.graph} 不存在？）：{exc}")

@@ -164,6 +164,26 @@ def archive_eligible(n_now: int, n_star_cached: int, grace_n: int) -> bool:
     return n_now >= n_star_cached + grace_n
 
 
+def neglect_due(n_now: int, n_last_touched: int, neglect_count: int, n_neglect: int) -> bool:
+    """忽视区间判定：第 (neglect_count+1) 个 N_neglect 区间已完整跨过才触发。
+
+    区间幂等的来源：同一区间内重复执行本判定，结论不变；触发后 neglect_count+1，
+    下一触发点推到再下一个区间——重复 sweep/重跑不产生重复惩罚。
+
+    M7 起单点在本模块（记忆动力学判定归 FF 引擎）：M6 sweep 与 M7 重放重建
+    共用同一份逻辑，禁止两处各抄一份。
+    """
+    return n_now - n_last_touched >= (neglect_count + 1) * n_neglect
+
+
+def consolidate_due(reinforce_count: int, conflict_count: int, threshold: int) -> bool:
+    """固化判定：reinforce_count 达阈值且期间无 conflict（设计文档 §13.4）。
+
+    与 neglect_due 同规约：单点在本模块，M6 sweep 与 M7 重放重建共用。
+    """
+    return reinforce_count >= threshold and conflict_count == 0
+
+
 # ---------------------------------------------------------------- 图读写（δ 三条触发路径）
 
 _READ_PHI_SCRIPT = """

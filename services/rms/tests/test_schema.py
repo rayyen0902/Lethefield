@@ -72,3 +72,20 @@ def test_vectors_mapping_structure():
         "index": True,
         "similarity": "cosine",
     }
+
+
+# ---------------------------------------------------------------- M7 红线：禁失效标志
+
+
+def test_schema_has_no_invalidation_flags():
+    """M7 红线：节点/边属性中不存在任何"硬失效标志"字段（开发文档 §8 验收项 1）。"""
+    from lethefield_rms.schema import find_invalidation_flags
+
+    assert find_invalidation_flags(list(EXPECTED_PROPERTY_KEYS)) == []
+    assert find_invalidation_flags(list(EDGE_LABELS)) == []  # supersedes 是边不是标志
+    # 谓词本身有效：典型违规命名能被拦下
+    assert find_invalidation_flags(["tombstone", "is_invalidated", "superseded_by"]) == [
+        "tombstone",
+        "is_invalidated",
+        "superseded_by",
+    ]

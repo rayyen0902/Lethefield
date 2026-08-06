@@ -34,6 +34,25 @@ EXPECTED_PROPERTY_KEYS: dict[str, str] = {
 # 四类关系图 + 纠错边；temporal immutable，所有边均不参与衰减（方案 A：衰减只作用于节点）
 EDGE_LABELS: tuple[str, ...] = ("temporal", "semantic", "causal", "entity", "supersedes")
 
+# M7 红线（设计文档 §13.7）：schema 禁止任何"硬失效标志"字段——supersedes 边记录事实，
+# "是否返回"下沉检索策略。tombstone/invalidated 类命名出现在属性键/边标签即违规。
+FORBIDDEN_FLAG_TOKENS: tuple[str, ...] = (
+    "tombstone",
+    "invalid",
+    "deleted",
+    "superseded",
+    "expired",
+    "disabled",
+    "is_valid",
+    "is_active",
+)
+
+
+def find_invalidation_flags(names: list[str]) -> list[str]:
+    """扫描命名中的失效标志禁项（子串匹配，大小写不敏感），返回违规名列表。"""
+    return [name for name in names if any(token in name.lower() for token in FORBIDDEN_FLAG_TOKENS)]
+
+
 # (索引名, 属性键名, 是否唯一)；默认 multiplicity，边不加约束
 COMPOSITE_INDEXES: tuple[tuple[str, str, bool], ...] = (
     ("byNodeKey", "node_key", True),

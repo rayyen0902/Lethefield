@@ -2,7 +2,7 @@
 
 边界（开发文档 §6 明确不做 + §9 定稿）：
 - 任何接口不绕过 EX 直接写 RMS——`reinforce` 是唯一保留的同步直连旁路，
-  且必须异步补 EX 元事件（fire-and-forget，§13.7；时间窗合并归 M7）。
+  且必须异步补 EX 元事件（fire-and-forget，§13.7；时间窗合并在 ex_ingest，M7）。
 - record / flag_conflict 只到 EX ack 为止；SS→RMS 异步入链（M14/M15）不在返回路径。
 - FF 内部字段（s_effective、φ_i 计数器等）一律 `debug` scope 才出——四个操作统一适用，
   防"经 reinforce 等写接口旁路探测 FF 状态"。
@@ -146,6 +146,7 @@ def reinforce(ctx: ApiContext, claims: Claims, *, space_id: str, node_key: str) 
         n_at_event=n_now,
         agent_actor_id=claims.agent_actor_id,
         account_id=claims.account_id,
+        merge_window_ms=ex_ingest.REINFORCE_MERGE_WINDOW_MS,  # M7 时间窗合并
     )
     result: dict = {"node_key": node_key, "applied": True}
     if has_debug(claims):
