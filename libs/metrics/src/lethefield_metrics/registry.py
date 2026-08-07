@@ -28,6 +28,12 @@ LABEL_WHITELIST: frozenset[str] = frozenset(
         "namespace_class",
         "outcome",
         "reason",
+        # M11 训练管线指标（§12.4 课题定案：training_samples_total{source,rule,review_status}）：
+        # 均为低基数枚举，不违反基数纪律。
+        "source",
+        "rule",
+        "review_status",
+        "kind",
     }
 )
 

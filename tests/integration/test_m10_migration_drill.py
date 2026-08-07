@@ -128,9 +128,7 @@ def stack():
     cell2_gremlin.close()
     cell2_es.close()
     # cell2 注册不残留：后续模块（m9 等）的 select_cell 不应看到一个可能已下线的 Cell
-    cell_session.execute(
-        "DELETE FROM lethefield_control.cells WHERE cell_id = %s", (CELL2_ID,)
-    )
+    cell_session.execute("DELETE FROM lethefield_control.cells WHERE cell_id = %s", (CELL2_ID,))
     cell2_cluster.shutdown()
     cell_cluster.shutdown()
     ex_cluster.shutdown()

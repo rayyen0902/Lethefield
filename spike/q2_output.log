@@ -1,0 +1,24 @@
+
+===== Q2a: JanusGraph mixed index (ES 后端) 全文检索 =====
+management: ['index contentByText status=REGISTERED']
+textContains('memory') hits: ['dave', 'dave', 'alice', 'dave']
+Q2a PASS: mixed index 全文查询命中
+
+===== Q2b: 在 JG 的 ES 索引上加 dense_vector（同索引方案可行性） =====
+ES indices: [('janusgraph_contentbytext', '6', '1')]
+janusgraph_contentbytext mapping: dynamic=None, fields=['all', 'content']
+janusgraph_contentbytext _meta: None
+janusgraph_contentbytext settings: shards=1, replicas=1
+PUT _mapping -> 200: {"acknowledged":true}
+kNN on janusgraph_contentbytext -> 200
+kNN hits: [('c0-spaceA', 0.833), ('c0-spaceB', 0.8298), ('c2-spaceB', 0.5348), ('c1-spaceA', 0.488)]
+
+===== Q2c: 独立向量索引 rms_vectors + custom routing =====
+_search_shards routing=spaceA: 1 shard(s), total=1
+_search_shards routing=spaceB: 1 shard(s), total=1
+kNN routing=spaceA hits (node_key, shard, score): [('spaceA-n0', None, 0.8395), ('spaceA-n2', None, 0.5321), ('spaceA-n1', None, 0.4977)]
+kNN routing=spaceB hits: [('spaceB-n0', None, 0.8248), ('spaceB-n2', None, 0.5297), ('spaceB-n1', None, 0.5006)]
+
+===== Q2 小结 =====
+(b) 同索引(JG索引)加 dense_vector + kNN: 可行
+(c) 独立向量索引 + custom routing: 可行（见上方断言）

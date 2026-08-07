@@ -1,0 +1,69 @@
+services:
+  cassandra:
+    image: cassandra:4.1
+    container_name: spike-cassandra
+    environment:
+      MAX_HEAP_SIZE: 1500M
+      HEAP_NEWSIZE: 300M
+      JVM_OPTS: "-Dcassandra.skip_wait_for_gossip_to_settle=0"
+    ports:
+      - "9042:9042"
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    networks: [spike]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: spike-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms1536m -Xmx1536m"
+      bootstrap.memory_lock: "false"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [spike]
+
+  janusgraph:
+    image: janusgraph/janusgraph:1.0.0
+    container_name: spike-janusgraph
+    environment:
+      JANUS_PROPS_TEMPLATE: cql-es
+      janusgraph.storage.hostname: cassandra
+      janusgraph.index.search.hostname: elasticsearch
+      gremlinserver.evaluationTimeout: 300000
+      JAVA_OPTIONS: "-Xms512m -Xmx1536m"
+    ports:
+      - "8182:8182"
+    volumes:
+      - janusgraph-data:/opt/janusgraph/data
+      - ./conf/jg-server-cmg.yaml:/opt/janusgraph/conf/janusgraph-server.yaml
+      - ./conf/jg-config.properties:/etc/opt/janusgraph/janusgraph-config.properties
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks: [spike]
+
+volumes:
+  cassandra-data:
+  es-data:
+  janusgraph-data:
+
+networks:
+  spike:

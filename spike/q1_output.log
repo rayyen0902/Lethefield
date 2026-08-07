@@ -1,0 +1,38 @@
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1119b8160>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/aiohttp/resolver.py:47: RuntimeWarning: coroutine 'AiohttpTransport.close.<locals>.async_close' was never awaited
+  infos = await self._loop.getaddrinfo(
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x111995d80>
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1119b8160>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x10f221810>
+[Q1] gremlin server ready after wait: 16.2s (session time)
+[Q1] server bindings: ['g', 'graph', 'hook']
+[Q1] traversal source 'g' works, V count probe = [0]
+[Q1] write: ['written']
+[Q1] counts: [{'v': 3}, {'e': 2}]
+[Q1] vertices: {"name": ["alice"], "age": [30], "content": ["alice likes graph databases and memory systems"]}
+[Q1] alice ->2hop knows-> : ['carol']
+[Q1] bytecode API: V count = 3, names = ['alice', 'bob', 'carol']
+[Q1] PASS in 24.4s

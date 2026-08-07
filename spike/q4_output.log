@@ -1,0 +1,19 @@
+
+===== 写入两个 space =====
+spaceA: 20 events written (graph + vectors)
+spaceB: 20 events written (graph + vectors)
+
+===== retrieve spaceA（查询向量靠近 center0） =====
+anchors: ['spaceA-e18', 'spaceA-e6', 'spaceA-e3', 'spaceA-e12', 'spaceA-e9']
+subgraph nodes=15, kept=7, dropped=8
+kept: ['spaceA-e10', 'spaceA-e11', 'spaceA-e12', 'spaceA-e13', 'spaceA-e17', 'spaceA-e18', 'spaceA-e19']
+dropped (θ过滤): ['spaceA-e2', 'spaceA-e3', 'spaceA-e4', 'spaceA-e5', 'spaceA-e6', 'spaceA-e7', 'spaceA-e8', 'spaceA-e9']
+
+===== 断言 =====
+e7 s_effective=0.1000 (< 0.3 应被过滤)
+断言 1-4 全部通过：召回/低分过滤/衰减过滤/跨 space 隔离
+
+===== retrieve spaceB（对称验证） =====
+spaceB: subgraph=15, kept=10, dropped=5
+Q4 PASS: 最小业务闭环成立
+q4 exit=0

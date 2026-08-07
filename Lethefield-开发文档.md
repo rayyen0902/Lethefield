@@ -16,6 +16,8 @@
 7. 销毁指令接口形态升级确认定案：训练 tenant 持久化控制 topic（Pulsar），生产者等 broker ack、失败即标记步骤失败并告警留痕，consumer backlog 纳入监控，指令 schema 单点管理（详见 M10 注销第 4 步、M11 授权撤回与删除权联动）。
 8. 迁移演练升级确认定案：分两档——本地档（RMS 真跨 Cell 走 compose `cell2` profile、EX 同集群 pipeline 演练）+ 准出档（临时扩容环境补跑含 EX 跨集群流式传输的完整演练）；否决常驻第二 EX 集群（OOM 风险换偶发需求）与"本地不演练"（不满足验收）（详见 M10 验收标准）。
 9. Dead Man's Switch 落地形态升级确认定案：双路分离——集群级 probe topic 探针（page 级，禁止向 space namespace 发探针污染数据面）+ space 写入新鲜度（observation 级；「活跃」= 过去 W 窗口有摄入或 hot/premium tier；W 与超窗阈值待标定）（详见 M10、§20）。
+10. R3 检测机制升级确认定案：关联式实现——retrieve 发射最小化召回明细日志事件（`space_ref` 哈希 + `node_key` 列表 + θ 统计，不含原文），授权拦截后过境训练 topic，worker 按 `node_key` + `W_r3` 时间窗与 ④ 路纠错对关联，命中才产样本；未经召回的纠错不计入 R3；否决"纠错即样本"简化（污染标定闭环）（详见 M11）。
+11. 决策留痕表结构补齐（§11.3 既定要求）：新增 `agent_suggestion` / `outcome`（`accepted|modified|rejected`）/ `escalation_type`（可空）三字段；R1/R2 在提交路径判定喂训练 topic ① 口；否决"只进训练样本、不动表"（留痕库审计面缺位）（详见 M0 任务 5）。
 
 **v1.1 修订记录**（相对 v1.0，评审发现的问题修复）：
 1. 新增模块 M0（工程地基）、M14（SS 显著性打分服务）、M15（写入链 worker）、M16（IS 简版）——v1.0 中 SS、写入链、IS 三处只有零散要求、无责任模块，属遗漏。
@@ -70,7 +72,7 @@
    - 存储与 Pulsar 客户端封装（连接管理、`ControlPlaneStore` 抽象接口定义——实现随 M9 落地，接口在 M0 冻结）。
 3. **docker-compose 单节点全栈**：Cassandra（Cell 用 + EX 用两实例）+ ES（图索引/向量用 + 运维日志用两实例）+ Pulsar + Redis + PostgreSQL，一键起栈用于开发与 CI。
 4. **spike q1–q4 脚本转 CI 集成基线**：spike 已验证的四断言（高分召回/低分过滤/衰减过滤/跨空间隔离）移植为回归测试，CI 必跑（见 `spike/SPIKE_REPORT.md`）。
-5. **决策留痕表单与授权注册表最小实现**：§11.3 决策留痕机制从第一天可用（M11 入料口①的前提）；授权注册表空表先建（M11 授权拦截的前提）。
+5. **决策留痕表单与授权注册表最小实现**：§11.3 决策留痕机制从第一天可用（M11 入料口①的前提）；授权注册表空表先建（M11 授权拦截的前提）。留痕表字段必须覆盖 §11.3 既定要求（v1.2 定案）：在 `title/context/decision/rationale/decided_by` 基础上补 **`agent_suggestion`**（Agent 建议内容）、**`outcome`**（`accepted|modified|rejected`，人类对建议的处置结果）、**`escalation_type`**（§11.2 四类，可空）——R1（`outcome≠accepted`）与 R2（`escalation_type` 非空）在提交路径判定并喂训练 topic ① 口，留痕库本身即可审计（表单即标注界面，不新增标注工种）。
 
 **验收标准**：
 - [ ] 新机器 clone 仓库后，一条命令起全栈、跑通 CI（含 spike 移植的四断言回归），全绿。
@@ -571,6 +573,12 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 
 **刻意不做全量沉淀**——规则未命中的常规流量只进运维日志滚动清理，不进训练管线。这是设计原则，不是性能优化，不要为了"数据多总是好的"擅自扩大采集范围。
 
+**R3 检测机制（v1.2 定案，关联式实现）**：
+1. retrieve 后发射召回明细日志事件（logschema，进运维日志管线——③ 入料口的既定数据源）。字段最小化：`space_ref` 不透明哈希 + 召回 `node_key` 列表 + θ 统计 + retrieve 时间戳 + query 类别枚举；**不含** query 原文与内容摘要（基数纪律）。
+2. M11 生产侧过滤器读日志管线、查授权注册表，**未授权 space 的明细在入训练 topic 前拦截**（③④ 类既定拦截点不变）；授权 space 的明细**过境**训练 topic（短 retention，不沉淀）。
+3. 加工 worker 将召回明细与 ④ 路纠错对事件按 `node_key` + 时间窗 `W_r3` 关联，**命中才产 R3 样本**；未命中明细随 retention 滚动清除。
+4. 语义边界：R3 是检索质量信号，**未经召回的纠错不计入 R3**（属别的价值类别，归 R4/R6 再议）；"纠错即样本"的简化方案会污染标定闭环，已否决。过境 ≠ 沉淀，与"刻意不做全量沉淀"不冲突。
+
 ### 管线架构
 ```
 数据源 → 训练 topic（Pulsar 独立 tenant/namespace，与业务流 retention/配额隔离）
@@ -602,16 +610,25 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 4. **可定位性实现要求**：哈希 + 样本索引清单，使定位是 **O(清单) 操作**，不是全量扫描。**必须 1.0 内建，不接受"后续再补"的实现**——这是可撤回性的前提，后补等于重建整套定位机制。
 
 ### 验收标准
-- [ ] 未授权 space 产生的第 ③④ 类数据，加工 worker 在入 topic 前即拒绝（有测试用例：授权状态切换前后对比行为）。
-- [ ] 授权撤回后，对应 `space_ref` 的存量样本可在 O(清单) 时间内定位并完成内容清除（不是遍历全部样本）。
-- [ ] M10 注销流程触发的销毁广播，训练管线侧有实际接收与处置记录（决策留痕可查）。
-- [ ] R1–R3 规则各有可触发的测试场景，命中后产生符合 schema 的样本；未命中规则的常规流量不产生训练样本。
-- [ ] 加工 worker 代码审查：不存在任何直接查询业务库（RMS/EX 实时库）的调用路径，只读 topic/对象存储。
+- [x] 未授权 space 产生的第 ③④ 类数据，加工 worker 在入 topic 前即拒绝（有测试用例：授权状态切换前后对比行为）。
+- [x] 授权撤回后，对应 `space_ref` 的存量样本可在 O(清单) 时间内定位并完成内容清除（不是遍历全部样本）。
+- [x] M10 注销流程触发的销毁广播，训练管线侧有实际接收与处置记录（决策留痕可查）。
+- [x] R1–R3 规则各有可触发的测试场景，命中后产生符合 schema 的样本；未命中规则的常规流量不产生训练样本。
+- [x] 加工 worker 代码审查：不存在任何直接查询业务库（RMS/EX 实时库）的调用路径，只读 topic/对象存储。
 
 ### 明确不做
 - 不做全量流量沉淀。
 - 不在 1.0 实现 R4–R6、模型预标注、冷层 Parquet 自动化（可延后项，不是不做，是不在本轮验收范围）。
 - 不在 2.0 服务商场景授权结构确定前，扩大训练数据来源范围。
+
+### 实现定案（v1.2，随代码落地入档）
+- **feed 信封与 topic 单点** = `libs/clients/training_feed.py`：`persistent://lethefield-training/feeds/raw`（单 topic + 信封 kind 四值，1.0 不按源拆 topic；短 retention 7 天占位，**过境 ≠ 沉淀**）；R1/R2 判定纯函数 `decision_rules` 单点，提交路径与 worker 共用。销毁订阅名 `DESTROY_SUBSCRIPTION` 单点上移至 `training_control.py`（M10 sink 与 worker 共用继承积压）。
+- **授权注册表归属**：独立 Postgres 表（M0 已建，§12.4 待决项 1 按现状收口）；store 下沉 `libs/clients/auth_registry.py`（API 闸门/worker/ex-feed 多处共用，共享代码只允许 libs/），新增 `delete`（销毁处置删注册表项）；ops/auth_registry 仅剩薄 CLI re-export。
+- **① 口**：decision_log 补齐 §11.3 三列（M0 任务 5 定案），幂等迁移 `deploy/postgres/migrations/001_decision_log_m11.sql`；R1/R2 命中才发布（best-effort，失败只留痕不阻塞提交；① 类无用户内容，不过授权闸门）。
+- **③ 口过渡形态**：召回明细 LogEvent 恒发（运维日志管线，M12 收口）；授权闸门 1.0 在 API retrieve 进程内执行（同一拦截点语义：入 topic 前、查注册表、CALIBRATION scope），M12 日志管线上线后过滤器可改为读管线。明细字段最小化：无 query 原文与内容摘要；θ 统计数据源 = `RetrievalResult.stats`（anchors/pool/returned，四阶段签名不动）。
+- **④ 口**：`lethefield_training.ex_feed` 只读 EX 派生纠错对（旧内容按 `ref_conflict` 反查 EX 事件，不触 RMS；缺一半的对不喂）；CONTENT_COPY 未授权直接拒发；state 文件幂等。1.0 仅纠错对（供 R3），纠错链/高质量片段独立样本随 R4 延后。
+- **worker**：双订阅单进程轮询（feed `training-sample-worker` + control `training-destroy-sink`）；worker 侧授权复查为第二道防线；热层 = 本地目录（无对象存储，1.0 工程从简）`hot/samples-日期.jsonl` + `index/{space_ref}.jsonl` 清单索引；`scrub` 只读目标清单按单重写（O(清单)），内容字段清空、骨架保留；召回窗落 `recall_window.jsonl` 重启可重建；`W_r3` 默认 24h 占位（§20 待标定，env 可配）；worker 侧模块禁 import gremlin/cassandra/ex_n（红线 1，静态测试强制）。
+- **样本规则标签**：② 口人工提交即触发，rule 标 R5（无自动检测，R5 自动规则仍属延后）；R3 语义边界——未经召回的纠错不计入 R3（归 R4/R6 再议）。
 
 ---
 
@@ -830,6 +847,7 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 
 - FF 相关：`λ`、`N_neglect`、`θ_base`、归档宽限期 `grace_n`（**事件距离度量**，见 M6；不是墙钟秒数）、固化阈值（`reinforce_count` 阈值）。
 - DMS 新鲜度窗口：`W`（活跃判定窗口）与超窗告警阈值（见 M10 Dead Man's Switch 定案）。
+- R3 关联时间窗 `W_r3`（召回明细 × 纠错事件的命中窗口，见 M11 R3 检测机制）。
 - SS 六维合成权重（ER/E/I/G/N/C → `s` 初值）：**禁止硬编码**，以配置占位，待种子期真实数据标定（见 M14）。
 - 各 `ff_*` 指标健康区间。
 - Cell 容量标定（单 Cell 真实承载上限）、水位阈值 70/90（初值）。

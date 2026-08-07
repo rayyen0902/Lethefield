@@ -8,7 +8,15 @@ CREATE TABLE IF NOT EXISTS decision_log (
     context     TEXT NOT NULL DEFAULT '',
     decision    TEXT NOT NULL,
     rationale   TEXT NOT NULL DEFAULT '',
-    decided_by  TEXT NOT NULL
+    decided_by  TEXT NOT NULL,
+    -- v1.2 定案三列（M0 任务 5 补齐 §11.3 既定要求，M11 入料口 ① 的前提）：
+    -- Agent 建议内容 / 人类处置结果 / §11.2 升级四类（可空）。表单即标注界面。
+    agent_suggestion TEXT NOT NULL DEFAULT '',
+    outcome     TEXT NOT NULL DEFAULT 'accepted'
+                CHECK (outcome IN ('accepted', 'modified', 'rejected')),
+    escalation_type TEXT
+                CHECK (escalation_type IS NULL OR escalation_type IN
+                       ('ex_write_path', 'cross_space', 'novel_error', 'low_confidence'))
 );
 
 -- space_ref 为不透明哈希，不存 space_id 明文（与 §12.4 样本 schema 同一约定）；

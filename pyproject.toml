@@ -42,6 +42,7 @@ lethefield-logschema = { workspace = true }
 lethefield-metrics = { workspace = true }
 lethefield-rms = { workspace = true }
 lethefield-scheduler = { workspace = true }
+lethefield-training = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["libs", "ops", "services"]

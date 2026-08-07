@@ -1,0 +1,24 @@
+[project]
+name = "lethefield-training"
+version = "0.1.0"
+description = "训练数据管线（M11，1.0 最小实现）：加工 worker + 样本 schema + 热层落盘 + 撤回/销毁联动"
+requires-python = ">=3.12"
+dependencies = [
+    "lethefield-clients",
+    "lethefield-logschema",
+    "lethefield-metrics",
+    "pulsar-client>=3.4",
+    "prometheus-client>=0.20",
+]
+
+[tool.uv.sources]
+lethefield-clients = { workspace = true }
+lethefield-logschema = { workspace = true }
+lethefield-metrics = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lethefield_training"]

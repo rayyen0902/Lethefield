@@ -31,6 +31,8 @@ class SchedulerConfig:
     # 训练控制 namespace retention（契约 5：持久化 topic 本身是指令留存证据，
     # 与业务流独立；审计级保留初值 90 天，待合规标定）
     training_control_retention_minutes: int = 129_600  # 90 天
+    # M11 训练 feed namespace 短 retention（过境不沉淀：未命中明细滚动清除）
+    training_feeds_retention_minutes: int = 10_080  # 7 天
     # 销毁广播生产者重试（等 broker ack，最终失败 → 注销第 4 步失败中止，见 destroy.py）
     broadcast_max_retries: int = 3
     # 单节点起步部署的集群标识（映射表登记字段；多集群形态随 M10/生产化扩展）

@@ -16,6 +16,7 @@ import argparse
 
 from lethefield_clients import (
     CONTROL_NAMESPACE,
+    FEEDS_NAMESPACE,
     TRAINING_TENANT,
     MappingTableControlPlaneStore,
     Tier,
@@ -84,7 +85,21 @@ def main(argv: list[str] | None = None) -> int:
                 minutes=DEFAULT_CONFIG.training_control_retention_minutes,
                 size_mb=-1,
             )
-            print(f"[ok] 控制面就绪，Cell {local_cell().cell_id} 已注册，训练控制 namespace 已备妥")
+            # M11 训练数据 feed namespace（短 retention 过境，与业务流/控制面配额隔离）
+            pulsar_admin.ensure_namespace(
+                DEFAULT_CONFIG.pulsar_admin_url, TRAINING_TENANT, FEEDS_NAMESPACE
+            )
+            pulsar_admin.set_retention(
+                DEFAULT_CONFIG.pulsar_admin_url,
+                TRAINING_TENANT,
+                FEEDS_NAMESPACE,
+                minutes=DEFAULT_CONFIG.training_feeds_retention_minutes,
+                size_mb=-1,
+            )
+            print(
+                f"[ok] 控制面就绪，Cell {local_cell().cell_id} 已注册，"
+                "训练控制/feed namespace 已备妥"
+            )
             return 0
         if args.command == "export":
             count = export_jsonl(store, args.file)

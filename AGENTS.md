@@ -2,11 +2,13 @@
 
 ## 项目阶段
 
-M0–M10（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
+M0–M11（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
 FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租户调度器 /
-EX 存储与 Pulsar 归属 + 三存储生命周期流水线）已完成并验证（M0–M10 CI 全绿）。
-**下一个模块：M11 训练数据管线（1.0 最小实现）**（开发文档 §12：四入料口、R1–R3 高价值
-时刻判定、授权注册表入 topic 前拦截、space_ref 成组定位的可撤回性、契约 5 销毁指令真实消费）。
+EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线）已完成并验证
+（M0–M11 CI 全绿）。
+**下一个模块：M12 可观测性埋点（开发期最小集）**（开发文档 §13：§19.3 系统指标 +
+标定线最小集 + 日志事件 schema 落管线；M11 召回明细的进程内授权闸门是过渡形态，
+日志管线上线后过滤器改读管线）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -106,6 +108,32 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线）已完成并验证
   默认不进 CI，heap ~1.3G 注释锁死），实测只读窗口 15.6s（记录
   `deploy/baselines/m10_migration_drill.jsonl`）；EX 跨集群 sstableloader 与 API 多 Cell
   连接路由是已登记缺口。
+- M11 定案：训练数据管线在 `services/training`（lethefield-training）。feed 信封与 topic
+  单点 `libs/clients/training_feed.py`（topic `lethefield-training/feeds/raw`，短 retention
+  **过境 ≠ 沉淀**；信封 kind 四值 + R1/R2 判定纯函数 `decision_rules` 单点——提交路径与
+  worker 共用）；销毁订阅名单点 `DESTROY_SUBSCRIPTION` 在 `training_control.py`（M10 sink
+  与 M11 worker 共用继承积压）。授权注册表 store 下沉 `libs/clients/auth_registry.py`
+  （独立 Postgres 表，§12.4 待决项 1 按现状收口；ops/auth_registry 仅剩薄 CLI re-export），
+  新增 `delete`（销毁处置删注册表项）。decision_log 补齐 §11.3 三列
+  （agent_suggestion/outcome/escalation_type；幂等迁移 `deploy/postgres/migrations/001_*.sql`；
+  R1 = outcome≠accepted、R2 = escalation_type 非空，命中才发布——常规流量不进管线）。
+  ③ 入料口：API retrieve 发射最小化召回明细（space_ref + node_key 列表 + θ 阶段计数 +
+  query 类别，**无 query 原文**），LogEvent 进运维日志 + CALIBRATION 授权闸门后入 feed
+  topic（进程内闸门是 M12 日志管线上线前的过渡形态）；`RetrievalResult.stats`
+  （anchors/pool/returned）是 θ 统计数据源。④ 入料口 `ex_feed`：只读 EX 派生纠错对
+  （旧内容按 `ref_conflict` 去 `ev_` 前缀反查 EX 事件，不触 RMS），CONTENT_COPY 闸门
+  入 topic 前拒发，state 文件幂等。worker 双订阅轮询（feed `training-sample-worker` +
+  control `training-destroy-sink`），worker 侧授权复查为第二道防线；热层 =
+  本地目录（默认 `var/training`）：`hot/samples-日期.jsonl` + `index/{space_ref}.jsonl`
+  清单索引，`scrub` 只读目标清单按单重写（**O(清单)**，撤回/销毁同一处置），骨架保留
+  内容字段清空。R3 = 召回明细 × 纠错对按 node_key + `W_r3` 窗关联（默认 24h 占位，
+  env 可配待标定），**未经召回的纠错不计入 R3**（归 R4/R6 再议）；召回窗落
+  `recall_window.jsonl` 重启可重建。worker 侧模块禁 import gremlin/cassandra/ex_n
+  （红线 1，静态测试 `test_no_business_db.py` 强制）。指标白名单新增
+  source/rule/review_status/kind 四个低基数枚举标签。
+- Pulsar Exclusive 订阅在前一 consumer 关闭后短暂窗口内报 ConsumerBusy（broker 连接回收
+  滞后）——快速重订阅要退避重试（worker `_subscribe_with_retry`），常驻形态订阅常开
+  不按轮重建（M11 集成测试实测）。
 - pulsar-client 的 `receive` 参数名是 `timeout_millis`（写错被宽泛 except 吞成假阴性——
   consumer 循环只捕 `pulsar.Timeout`）；Pulsar 412：backlog quota 必须 < retention size。
 - **gremlin_python 客户端基于 tornado 单连接，跨线程共享同一 Client 会死锁**——
@@ -143,6 +171,11 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线）已完成并验证
 | `uv run python -m lethefield_scheduler migrate <space> [--to-cell ID]` | M10：跨 Cell 迁移（实测只读窗口入报告） |
 | `uv run python -m lethefield_scheduler.training_control_sink [--once]` | M10：契约 5 销毁指令最小接收 consumer |
 | `uv run python -m lethefield_ingest_dms [--once]` | M10：EX 摄入 DMS 巡检（探针/backlog/新鲜度），page 告警退出码 1 |
+| `uv run python -m lethefield_training worker [--once]` | M11：加工 worker（feed 消费 + 契约 5 销毁处置 + 热层落盘） |
+| `uv run python -m lethefield_training scrub <space_ref>` | M11：撤回授权存量处置（O(清单) 定位、内容清除、骨架保留，幂等） |
+| `uv run python -m lethefield_training submit-incident --problem P --diagnosis D --decision C --outcome O` | M11：② 入料口（故障/混沌案例提交，rule=R5） |
+| `uv run python -m lethefield_training ex-feed --space S` | M11：④ 入料口（EX 只读派生纠错对，CONTENT_COPY 闸门，幂等） |
+| `uv run python -m lethefield_decision_log submit ... [--feed]` | M11：决策留痕提交（三列已补；--feed 时 R1/R2 命中发布训练 feed） |
 | `docker compose --profile cell2 up -d` 后 `uv run pytest tests/integration/test_m10_migration_drill.py` | M10：跨 Cell 迁移演练（按需，不占常驻内存；默认 CI 自动 skip） |
 
 ## 约定

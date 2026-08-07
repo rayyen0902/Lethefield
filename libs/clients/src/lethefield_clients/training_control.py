@@ -31,6 +31,10 @@ CONTRACT_VERSION = 1
 
 COMMAND_SPACE_DESTROY = "space_destroy"
 
+# durable subscription 名（契约 5 消费侧单点）：M10 sink 与 M11 加工 worker 共用——
+# 复用同名订阅继承 consumer 离线期间的 broker 侧积压。
+DESTROY_SUBSCRIPTION = "training-destroy-sink"
+
 
 def control_topic() -> str:
     """销毁指令 topic 全限定名（生产者/consumer/DMS backlog 监控共用此单点）。"""

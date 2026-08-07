@@ -1,0 +1,33 @@
+
+Received error message '{'requestId': '62e4a490-8648-431d-9135-0c58f85d481b', 'status': {'code': 598, 'message': None, 'attributes': {'stackTrace': 'java.util.concurrent.TimeoutException\n\tat java.base/java.util.concurrent.FutureTask.get(Unknown Source)\n\tat org.janusgraph.graphdb.database.idassigner.StandardIDPool.waitForIDBlockGetter(StandardIDPool.java:132)\n\tat org.janusgraph.graphdb.database.idassigner.StandardIDPool.nextBlock(StandardIDPool.java:175)\n\tat org.janusgraph.graphdb.database.idassigner.StandardIDPool.nextID(StandardIDPool.java:201)\n\tat org.janusgraph.graphdb.database.idassigner.VertexIDAssigner.assignID(VertexIDAssigner.java:350)\n\tat org.janusgraph.graphdb.database.idassigner.VertexIDAssigner.assignID(VertexIDAssigner.java:199)\n\tat org.janusgraph.graphdb.database.idassigner.VertexIDAssigner.assignID(VertexIDAssigner.java:158)\n\tat org.janusgraph.graphdb.database.StandardJanusGraph.assignID(StandardJanusGraph.java:628)\n\tat org.janusgraph.graphdb.transaction.StandardJanusGraphTx.addProperty(StandardJanusGraphTx.java:922)\n\tat org.janusgraph.graphdb.transaction.StandardJanusGraphTx.addProperty(StandardJanusGraphTx.java:873)\n\tat org.janusgraph.graphdb.transaction.StandardJanusGraphTx.addProperty(StandardJanusGraphTx.java:869)\n\tat org.janusgraph.graphdb.transaction.StandardJanusGraphTx.addVertex(StandardJanusGraphTx.java:626)\n\tat org.janusgraph.graphdb.tinkerpop.JanusGraphBlueprintsTransaction.addVertex(JanusGraphBlueprintsTransaction.java:138)\n\tat org.janusgraph.graphdb.tinkerpop.JanusGraphBlueprintsGraph.addVertex(JanusGraphBlueprintsGraph.java:143)\n\tat org.janusgraph.graphdb.tinkerpop.JanusGraphBlueprintsGraph.addVertex(JanusGraphBlueprintsGraph.java:59)\n\tat org.apache.tinkerpop.gremlin.process.traversal.step.map.AddVertexStartStep.processNextStart(AddVertexStartStep.java:102)\n\tat org.apache.tinkerpop.gremlin.process.traversal.step.util.AbstractStep.next(AbstractStep.java:140)\n\tat org.apache.tinkerpop.gremlin.process.traversal.step.util.AbstractStep.next(AbstractStep.java:40)\n\tat org.apache.tinkerpop.gremlin.process.traversal.util.DefaultTraversal.next(DefaultTraversal.java:206)\n\tat org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:321)\n\tat Script17.run(Script17.groovy:3)\n\tat org.apache.tinkerpop.gremlin.groovy.jsr223.GremlinGroovyScriptEngine.eval(GremlinGroovyScriptEngine.java:679)\n\tat org.apache.tinkerpop.gremlin.groovy.jsr223.GremlinGroovyScriptEngine.eval(GremlinGroovyScriptEngine.java:381)\n\tat java.scripting/javax.script.AbstractScriptEngine.eval(Unknown Source)\n\tat org.apache.tinkerpop.gremlin.groovy.engine.GremlinExecutor.lambda$eval$0(GremlinExecutor.java:272)\n\tat java.base/java.util.concurrent.FutureTask.run(Unknown Source)\n\tat java.base/java.util.concurrent.Executors$RunnableAdapter.call(Unknown Source)\n\tat java.base/java.util.concurrent.FutureTask.run(Unknown Source)\n\tat java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)\n\tat java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)\n\tat java.base/java.lang.Thread.run(Unknown Source)\n', 'exceptions': ['java.util.concurrent.TimeoutException']}}, 'result': {'meta': {}, 'data': None}}'
+
+With results dictionary '{'62e4a490-8648-431d-9135-0c58f85d481b': <gremlin_python.driver.resultset.ResultSet object at 0x11329c160>}'
+
+===== Q2a: JanusGraph mixed index (ES 后端) 全文检索 =====
+management: ['index contentByText status=INSTALLED']
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/scripts/q2_vector_index.py", line 186, in <module>
+    main()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/scripts/q2_vector_index.py", line 175, in main
+    hits = part_a()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/scripts/q2_vector_index.py", line 62, in part_a
+    submit(r"""
+  File "/Users/caopinggege/Desktop/Lethefield/spike/scripts/common.py", line 20, in submit
+    return client.submit(script, bindings=bindings or {}).all().result()
+  File "/opt/miniconda3/lib/python3.10/concurrent/futures/_base.py", line 458, in result
+    return self.__get_result()
+  File "/opt/miniconda3/lib/python3.10/concurrent/futures/_base.py", line 403, in __get_result
+    raise self._exception
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/resultset.py", line 90, in cb
+    f.result()
+  File "/opt/miniconda3/lib/python3.10/concurrent/futures/_base.py", line 451, in result
+    return self.__get_result()
+  File "/opt/miniconda3/lib/python3.10/concurrent/futures/_base.py", line 403, in __get_result
+    raise self._exception
+  File "/opt/miniconda3/lib/python3.10/concurrent/futures/thread.py", line 58, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/connection.py", line 90, in _receive
+    status_code = self._protocol.data_received(data, self._results)
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/protocol.py", line 138, in data_received
+    raise GremlinServerError(message['status'])
+gremlin_python.driver.protocol.GremlinServerError: 598: None

@@ -3,10 +3,11 @@ name = "lethefield-decision-log"
 version = "0.1.0"
 description = "决策留痕表单最小实现（§11.3，M0 起可用）"
 requires-python = ">=3.12"
-dependencies = ["lethefield-clients", "psycopg[binary]>=3.1"]
+dependencies = ["lethefield-clients", "lethefield-logschema", "psycopg[binary]>=3.1"]
 
 [tool.uv.sources]
 lethefield-clients = { workspace = true }
+lethefield-logschema = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

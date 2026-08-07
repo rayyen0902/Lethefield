@@ -16,6 +16,7 @@ n_now 由 EX 摄入路径维护（Redis），读取走 `ex_ingest.n_now`——�
 """
 
 import logging
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,6 +25,11 @@ from cassandra.cluster import Cluster, Session
 from elasticsearch import Elasticsearch
 from gremlin_python.driver.client import Client as GremlinClient
 from lethefield_clients import (
+    AuthRegistryStore,
+    AuthScope,
+    FeedEvent,
+    FeedKind,
+    FeedSource,
     MappingCache,
     MappingTableControlPlaneStore,
     SpaceNotFoundError,
@@ -32,9 +38,13 @@ from lethefield_clients import (
     es_client,
     ex_cassandra_cluster,
     gremlin_client,
+    make_feed_publisher,
+    pulsar_client,
     redis_client,
+    space_ref_of,
 )
 from lethefield_clients.spaces import validate_space_id
+from lethefield_logschema import LogEvent
 from lethefield_rms import ff
 from lethefield_rms.retrieve import RetrievalResult
 from lethefield_rms.retrieve import retrieve as rms_retrieve
@@ -49,6 +59,38 @@ logger = logging.getLogger(__name__)
 # 元事件追加器签名（fire-and-forget；测试可注入同步实现等待落库）
 MetaAppender = Callable[..., None]
 
+# 训练 feed 发布器签名（M11 ③ 入料口；测试注入 fake）
+FeedPublisher = Callable[[FeedEvent], None]
+
+# 召回明细 query 类别枚举（M11 v1.2 定案最小化字段之一；按请求形态归类）
+QUERY_CLASSES: frozenset[str] = frozenset({"keyword", "vector", "hybrid"})
+
+
+def query_class_of(query_text: str | None, query_vector: list[float] | None) -> str:
+    """请求形态 → query 类别枚举（单点，禁放 query 原文进明细）。"""
+    if query_text is not None and query_vector is not None:
+        return "hybrid"
+    if query_vector is not None:
+        return "vector"
+    return "keyword"
+
+
+def _make_lazy_feed_publisher() -> FeedPublisher:
+    """默认 feed 发布器：首次使用时才建 Pulsar 连接（API 启动不依赖 Pulsar 在线）。
+
+    sync 端点跑在线程池，首次构建加锁防并发重复建连。
+    """
+    lock = threading.Lock()
+    holder: dict[str, FeedPublisher] = {}
+
+    def publish(event: FeedEvent) -> None:
+        with lock:
+            if "publisher" not in holder:
+                holder["publisher"] = make_feed_publisher(pulsar_client())
+        holder["publisher"](event)
+
+    return publish
+
 
 @dataclass
 class ApiContext:
@@ -61,6 +103,9 @@ class ApiContext:
     meta_appender: MetaAppender
     mapping_cache: MappingCache
     control_cluster: Cluster | None = None  # 控制面独立连接（故障演练可与数据面隔离）
+    # M11 ③ 入料口：授权闸门 + feed 发布器（None = 不发布，召回明细仍进运维日志）
+    auth_registry: AuthRegistryStore | None = None
+    feed_publisher: FeedPublisher | None = None
 
     @classmethod
     def from_env(cls) -> "ApiContext":
@@ -75,6 +120,8 @@ class ApiContext:
         store = MappingTableControlPlaneStore(ctx.control_cluster.connect())
         store.ensure_tables()
         ctx.mapping_cache = MappingCache(store)
+        ctx.auth_registry = AuthRegistryStore()
+        ctx.feed_publisher = _make_lazy_feed_publisher()
         return ctx
 
 
@@ -280,4 +327,62 @@ def retrieve(
         rho=rho,
         trace_history=trace_history,
     )
+    _emit_recall_detail(
+        ctx, space_id=space_id, result=result, query_text=query_text, query_vector=query_vector
+    )
     return present(ctx, result, gname=gname, space_id=space_id, debug=has_debug(claims))
+
+
+def _emit_recall_detail(
+    ctx: ApiContext,
+    *,
+    space_id: str,
+    result: RetrievalResult,
+    query_text: str | None,
+    query_vector: list[float] | None,
+) -> None:
+    """M11 ③ 入料口：召回明细——运维日志必发，训练 feed 授权闸门后发布。
+
+    字段最小化（v1.2 定案）：space_ref 不透明哈希 + 召回 node_key 列表 + θ 阶段计数
+    + query 类别枚举；不含 query 原文与内容摘要（基数纪律）。
+    授权拦截在入 topic 前（CALIBRATION scope）；best-effort，任何失败只留痕，
+    永不影响 retrieve 响应。授权判定故障按未授权处理（fail-closed）。
+    """
+    payload = {
+        "space_ref": space_ref_of(space_id),
+        "node_keys": [n.node_key for n in result.nodes],
+        "theta": result.stats,
+        "query_class": query_class_of(query_text, query_vector),
+    }
+    print(
+        LogEvent(
+            service="lethefield-api",
+            event_type="retrieve_recall_detail",
+            space_id=space_id,
+            payload=payload,
+        ).to_jsonl(),
+        file=sys.stderr,
+    )
+    if ctx.auth_registry is None or ctx.feed_publisher is None:
+        return
+    try:
+        if not ctx.auth_registry.is_authorized(payload["space_ref"], AuthScope.CALIBRATION):
+            return  # 未授权 space 的 ③ 类数据在入 topic 前拦截（既定拦截点）
+        ctx.feed_publisher(
+            FeedEvent(
+                kind=FeedKind.RECALL_DETAIL,
+                source=FeedSource.FF_METRIC,
+                space_ref=payload["space_ref"],
+                payload=payload,
+            )
+        )
+    except Exception as e:
+        print(
+            LogEvent(
+                service="lethefield-api",
+                event_type="recall_feed_failed",
+                space_id=space_id,
+                payload={"error": str(e)},
+            ).to_jsonl(),
+            file=sys.stderr,
+        )

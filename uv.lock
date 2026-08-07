@@ -20,6 +20,7 @@ members = [
     "lethefield-metrics",
     "lethefield-rms",
     "lethefield-scheduler",
+    "lethefield-training",
 ]
 
 [[package]]
@@ -780,6 +781,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
     { name = "lethefield-metrics" },
     { name = "lethefield-rms" },
     { name = "mcp" },
@@ -792,6 +794,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
     { name = "lethefield-rms", editable = "services/rms" },
     { name = "mcp", specifier = ">=1.2,<2" },
@@ -868,12 +871,14 @@ version = "0.1.0"
 source = { editable = "ops/decision_log" }
 dependencies = [
     { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
     { name = "psycopg", extra = ["binary"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
 ]
 
@@ -981,6 +986,27 @@ requires-dist = [
     { name = "lethefield-rms", editable = "services/rms" },
     { name = "pulsar-client", specifier = ">=3.4" },
     { name = "requests", specifier = ">=2.31" },
+]
+
+[[package]]
+name = "lethefield-training"
+version = "0.1.0"
+source = { editable = "services/training" }
+dependencies = [
+    { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
+    { name = "lethefield-metrics" },
+    { name = "prometheus-client" },
+    { name = "pulsar-client" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
+    { name = "lethefield-metrics", editable = "libs/metrics" },
+    { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "pulsar-client", specifier = ">=3.4" },
 ]
 
 [[package]]

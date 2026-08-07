@@ -13,6 +13,7 @@ import requests
 from conftest import ES_GRAPH_URL, GREMLIN_ALIAS, GREMLIN_URL, wait_for_gremlin
 from lethefield_clients import (
     CONTROL_NAMESPACE,
+    FEEDS_NAMESPACE,
     TRAINING_TENANT,
     MappingTableControlPlaneStore,
     SpaceNotFoundError,
@@ -162,5 +163,10 @@ def test_training_tenant_isolated_with_independent_retention(stack):
     assert retention["retentionTimeInMinutes"] == stack.config.training_control_retention_minutes
 
     namespaces = requests.get(f"{admin}/admin/v2/namespaces/{TRAINING_TENANT}", timeout=10).json()
-    assert namespaces == [f"{TRAINING_TENANT}/{CONTROL_NAMESPACE}"]  # 无业务 namespace 混入
+    # 无业务 namespace 混入；训练 tenant 内合法集合 = 控制面（M10）+ 数据 feed（M11），
+    # 子集断言（模块执行顺序不定，feeds 由 M11 fixture/bootstrap 创建）
+    assert set(namespaces) <= {
+        f"{TRAINING_TENANT}/{CONTROL_NAMESPACE}",
+        f"{TRAINING_TENANT}/{FEEDS_NAMESPACE}",
+    }
     assert control_topic().startswith(f"persistent://{TRAINING_TENANT}/")

@@ -15,12 +15,14 @@ import sys
 from collections.abc import Callable
 
 import pulsar
-from lethefield_clients import SpaceDestroyCommand, control_topic, pulsar_client
+from lethefield_clients import (
+    DESTROY_SUBSCRIPTION,
+    SpaceDestroyCommand,
+    control_topic,
+    pulsar_client,
+)
 from lethefield_logschema import LogEvent
 from pulsar import Client
-
-# durable subscription 名（M11 worker 复用以继承离线积压）
-DESTROY_SUBSCRIPTION = "training-destroy-sink"
 
 
 def handle_message(data: bytes, *, emit: Callable[[LogEvent], None]) -> None:

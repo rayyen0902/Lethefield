@@ -121,10 +121,15 @@ class NodeItem:
 
 @dataclass(frozen=True)
 class RetrievalResult:
-    """召回单元 = 带边子图（节点 + 时序/语义/因果/实体关系），非扁平节点列表。"""
+    """召回单元 = 带边子图（节点 + 时序/语义/因果/实体关系），非扁平节点列表。
+
+    stats：各阶段计数明细（anchors/pool/returned），M11 召回明细事件（③ 入料口）
+    的 θ 统计数据源；仅主入口填充，不改变四阶段签名与过滤逻辑。
+    """
 
     nodes: list[NodeItem]
     edges: list[EdgeRecord]
+    stats: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -639,7 +644,7 @@ def retrieve(
         ff_config=ff_config,
     )
     if not anchors:
-        return RetrievalResult(nodes=[], edges=[])
+        return RetrievalResult(nodes=[], edges=[], stats={"anchors": 0, "pool": 0, "returned": 0})
 
     # Stage 3：自适应遍历（JanusGraph；签名无 es、无 rho）
     pool, edges = _stage3_traverse(
@@ -665,6 +670,9 @@ def retrieve(
     )
 
     # Stage 4：token 预算
+    nodes = _stage4_budget(list(final.values()), config=config)
     return RetrievalResult(
-        nodes=_stage4_budget(list(final.values()), config=config), edges=final_edges
+        nodes=nodes,
+        edges=final_edges,
+        stats={"anchors": len(anchors), "pool": len(pool), "returned": len(nodes)},
     )

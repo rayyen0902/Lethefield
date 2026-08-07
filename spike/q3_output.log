@@ -1,0 +1,194 @@
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1102d3c70>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+RuntimeError: Cannot run the event loop while another loop is running
+Exception ignored in: <coroutine object AiohttpTransport.close.<locals>.async_close at 0x11027f8b0>
+Traceback (most recent call last):
+  File "<string>", line 1, in <lambda>
+KeyError: '__import__'
+Exception ignored in: <coroutine object AiohttpTransport.close.<locals>.async_close at 0x11027f8b0>
+Traceback (most recent call last):
+  File "<string>", line 1, in <lambda>
+KeyError: '__import__'
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x1102c0730>
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1102d3c70>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/aiohttp/client.py:529: RuntimeWarning: coroutine 'AiohttpTransport.close.<locals>.async_close' was never awaited
+  return _RequestContextManager(self._request(method, url, **kwargs))
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x1102c2b30>
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1102d3c70>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x11029b4c0>
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1102d3c70>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x11029beb0>
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1102d3c70>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x11029bfa0>
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1102d3c70>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x110320370>
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1102d3c70>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/aiohttp/connector.py:1571: RuntimeWarning: coroutine 'AiohttpTransport.close.<locals>.async_close' was never awaited
+  hosts = await self._resolve_host(host, port, traces=traces)
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x1103222c0>
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1102d3c70>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x110321270>
+Exception ignored in: <function AiohttpTransport.__del__ at 0x1102d3c70>
+Traceback (most recent call last):
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 61, in __del__
+    self.close()
+  File "/Users/caopinggege/Desktop/Lethefield/spike/.venv/lib/python3.10/site-packages/gremlin_python/driver/aiohttp/transport.py", line 132, in close
+    self._loop.run_until_complete(async_close())
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 625, in run_until_complete
+    self._check_running()
+  File "/opt/miniconda3/lib/python3.10/asyncio/base_events.py", line 586, in _check_running
+    raise RuntimeError(
+RuntimeError: Cannot run the event loop while another loop is running
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x110299900>
+
+===== Q3-1: JanusGraph 容器重启 -> 可服务时长 =====
+{
+  "docker_restart_cmd_s": 2.94,
+  "container_start_to_gremlin_service_s": 51.8
+}
+
+===== Q3-2: ConfiguredGraphFactory 现有图 =====
+existing graphs: []
+
+===== graph spikeq31 =====
+  template create() unavailable for spikeq31: ['template-failed: NullPointerException: Please create a template Configuration using the ConfigurationManagementGraph#createTemplateConfiguration API.']
+  create via createConfiguration(explicit): 1445 ms
+  open (cold, right after create): 4898 ms
+  reopen (closed -> open): 557 ms
+  first query (addV+commit): 2000 ms
+  subsequent count x3: last 48.6 ms
+
+===== graph spikeq32 =====
+  template create() unavailable for spikeq32: ['template-failed: NullPointerException: Please create a template Configuration using the ConfigurationManagementGraph#createTemplateConfiguration API.']
+  create via createConfiguration(explicit): 1169 ms
+  open (cold, right after create): 3017 ms
+  reopen (closed -> open): 501 ms
+  first query (addV+commit): 1941 ms
+  subsequent count x3: last 39.0 ms
+
+===== graph spikeq33 =====
+  template create() unavailable for spikeq33: ['template-failed: NullPointerException: Please create a template Configuration using the ConfigurationManagementGraph#createTemplateConfiguration API.']
+  create via createConfiguration(explicit): 904 ms
+  open (cold, right after create): 3631 ms
+  reopen (closed -> open): 398 ms
+  first query (addV+commit): 1919 ms
+  subsequent count x3: last 35.2 ms
+
+===== graph spikeq34 =====
+  template create() unavailable for spikeq34: ['template-failed: NullPointerException: Please create a template Configuration using the ConfigurationManagementGraph#createTemplateConfiguration API.']
+  create via createConfiguration(explicit): 832 ms
+  open (cold, right after create): 3564 ms
+  reopen (closed -> open): 482 ms
+  first query (addV+commit): 1961 ms
+  subsequent count x3: last 34.0 ms
+
+===== graph spikeq35 =====
+  template create() unavailable for spikeq35: ['template-failed: NullPointerException: Please create a template Configuration using the ConfigurationManagementGraph#createTemplateConfiguration API.']
+  create via createConfiguration(explicit): 921 ms
+  open (cold, right after create): 3247 ms
+  reopen (closed -> open): 408 ms
+  first query (addV+commit): 1941 ms
+  subsequent count x3: last 24.1 ms
+
+===== Q3-3: Cassandra keyspaces（验证每图独立 keyspace） =====
+janusgraph        spikeq33  system_auth         system_views         
+janusgraphconfig  spikeq34  system_distributed  system_virtual_schema
+spikeq31          spikeq35  system_schema     
+spikeq32          system    system_traces
+
+===== Q3 汇总 =====
+container restart -> service: 51.8s
+create path used: createConfiguration(explicit)
+{"metric": "create(new graph, keyspace+tables init)", "n": 5, "min_ms": 832.3, "p50_ms": 920.9, "max_ms": 1444.8, "mean_ms": 1054.1}
+{"metric": "open(cold)", "n": 5, "min_ms": 3016.8, "p50_ms": 3564.2, "max_ms": 4897.6, "mean_ms": 3671.3}
+{"metric": "reopen(close->open)", "n": 5, "min_ms": 398.4, "p50_ms": 482.3, "max_ms": 557.4, "mean_ms": 469.5}
+{"metric": "first query after open", "n": 5, "min_ms": 1918.5, "p50_ms": 1941.5, "max_ms": 2000.4, "mean_ms": 1952.5}
+{"metric": "subsequent query", "n": 15, "min_ms": 24.1, "p50_ms": 47.7, "max_ms": 114.4, "mean_ms": 52.0}
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x1102991b0>
+q3 exit=0
