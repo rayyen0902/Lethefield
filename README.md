@@ -1,15 +1,15 @@
 # Lethefield — 1.0 开发 monorepo
 
 FF（遗忘函数）驱动的记忆状态场。设计定案见根目录《Lethefield-设计文档》v1.7，
-开发执行依据见《Lethefield-开发文档》v1.2。**当前进度：M0–M10 已完成（CI 全绿），
-下一模块 M11（训练数据管线 1.0 最小实现）。**
+开发执行依据见《Lethefield-开发文档》v1.2。**当前进度：M0–M11 已完成（CI 全绿），
+下一模块 M12（可观测性埋点开发期最小集）。**
 
 ## 快速上手
 
 前置依赖：Docker（macOS 用 colima）、[uv](https://docs.astral.sh/uv/)。
 
 ```bash
-bash scripts/ci.sh   # = lint + 单测 + 起全栈 + 集成测试（q1–q4 基线 + M1–M10 验收）
+bash scripts/ci.sh   # = lint + 单测 + 起全栈 + 集成测试（q1–q4 基线 + M1–M11 验收）
 ```
 
 或分步：
@@ -37,8 +37,9 @@ ops/decision_log/  决策留痕表单最小实现（§11.3）
 ops/auth_registry/ 训练数据授权注册表最小实现（§12.4）
 ops/clock_monitor/ 时钟偏移监控告警（红线 6，M1 部署清单硬性项）
 ops/ingest_dms/    EX 摄入 Dead Man's Switch（M10：管道探针 + backlog + 写入新鲜度）
-services/          服务进程边界：api（M5 接口层）/ fs（M6 sweep）/ rms（M2–M4/M7）/ scheduler（M9/M10 调度器）
-tests/integration/ spike q1–q4 CI 集成基线 + M1–M10 各模块验收测试
+services/          服务进程边界：api（M5 接口层）/ fs（M6 sweep）/ rms（M2–M4/M7）/
+                   scheduler（M9/M10 调度器）/ training（M11 训练数据管线 worker）
+tests/integration/ spike q1–q4 CI 集成基线 + M1–M11 各模块验收测试
 docker-compose.yml 单节点全栈：JanusGraph + Cassandra×2 + ES×2 + Pulsar + Redis + PostgreSQL
                    （+ cell2 profile：迁移演练用第二 Cell，按需起、默认不进 CI）
 ```
@@ -52,8 +53,8 @@ uv run python -m lethefield_clock_monitor      # 时钟偏移巡检，超阈值�
 bash scripts/measure_restart_baseline.sh       # 重启至可服务时间基线（手动，非 CI）
 ```
 
-M2–M10 各模块巡检/运维命令（schema 巡检、FS liveness、纠错、重建、调度器 CLI、
-ingest DMS 等）完整清单见 `AGENTS.md` 常用命令表。
+M2–M11 各模块巡检/运维命令（schema 巡检、FS liveness、纠错、重建、调度器 CLI、
+ingest DMS、训练管线 worker/scrub/ex-feed 等）完整清单见 `AGENTS.md` 常用命令表。
 
 ## 硬约束（开发文档 M0，违反即评审不通过）
 
