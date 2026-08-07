@@ -6,8 +6,9 @@
    任何 DROP KEYSPACE，规避在线 DROP 导致的 Unknown CF 污染）；
 3. 先派生物后本体：rms_vectors 文档 → DROP 图 keyspace → 删 Pulsar namespace →
    最后 DROP EX keyspace（任何中途失败都不至于"图没了、源也没了"）；
-4. 训练管线销毁广播（M11 接口，本模块留注入点，默认结构化日志——
-   M10 验收"不是留空占位"届时替换真实调用）；
+4. 训练管线销毁广播（M10 真实链路：契约 5 指令 → 训练 tenant 持久化控制 topic，
+   生产者等 broker ack；**最终失败 → 告警 + 留痕并中止，禁止静默进入第 5 步**——
+   映射保留 destroying，步骤 1–3 幂等，修复后重跑本流程即可续做）；
 5. 清映射 + 全链路校验无残留。
 """
 
@@ -25,11 +26,14 @@ from lethefield_clients import (
     keyspace_name,
     validate_space_id,
 )
+from lethefield_logschema import LogEvent
 from lethefield_rms.vectors import VECTORS_INDEX
+from pulsar import Client as PulsarClient
 
 from lethefield_scheduler import pulsar_admin
 from lethefield_scheduler.config import DDL_TIMEOUT_SECONDS as _DDL_TIMEOUT_SECONDS
 from lethefield_scheduler.config import DEFAULT_CONFIG, SchedulerConfig
+from lethefield_scheduler.destroy_broadcast import BroadcastError, make_broadcast
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +52,16 @@ class DestroyDeps:
     ex_session: Session
     es: Elasticsearch
     config: SchedulerConfig = DEFAULT_CONFIG
+    # M10：契约 5 广播的 Pulsar 通道；不传 broadcast_destroy 时必须有，
+    # 否则第 4 步抛 BroadcastError 中止（禁止留空占位静默放行）
+    pulsar: PulsarClient | None = None
 
 
-def _default_broadcast(space_id: str) -> None:
-    """训练管线销毁广播的默认形态（M11 接口落地前的注入点）：结构化日志留痕。"""
-    logger.info(
-        "space.destroy.broadcast space_id=%s（M11 训练管线接口落地后替换真实调用）", space_id
-    )
+def _resolve_broadcast(deps: DestroyDeps) -> Callable[[str], None]:
+    """默认广播 = 契约 5 真实链路（等 broker ack）；无 Pulsar 通道直接失败。"""
+    if deps.pulsar is None:
+        raise BroadcastError("销毁广播无 Pulsar 通道（契约 5：禁止留空占位静默放行）")
+    return make_broadcast(deps.pulsar, max_retries=deps.config.broadcast_max_retries)
 
 
 def destroy_space(
@@ -103,8 +110,21 @@ def destroy_space(
         f"DROP KEYSPACE IF EXISTS {keyspace_name(space_id)}", timeout=_DDL_TIMEOUT_SECONDS
     )
 
-    # 4. 训练管线销毁广播（M11 接口注入点）
-    (broadcast_destroy or _default_broadcast)(space_id)
+    # 4. 训练管线销毁广播（契约 5：真实链路、等 broker ack；最终失败 →
+    #    告警 + 留痕并中止——禁止静默进入第 5 步，映射保留 destroying 可重试）
+    broadcast = broadcast_destroy or _resolve_broadcast(deps)
+    try:
+        broadcast(space_id)
+    except Exception:
+        logger.error(
+            LogEvent(
+                service="lethefield-scheduler",
+                event_type="destroy_broadcast_failed",
+                space_id=space_id,
+                payload={"consequence": "注销中止于第 4 步，映射保留 destroying，可重试"},
+            ).to_jsonl()
+        )
+        raise
 
     # 5. 清映射 + 全链路校验无残留
     deps.store.unregister_space(space_id)

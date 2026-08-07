@@ -127,3 +127,47 @@ def test_mapping_row_roundtrip():
         "Row", (), {"cell_id": "c", "endpoints": None, "capacity": None, "watermark_state": "open"}
     )()
     assert _row_to_cell(empty_cell_row).endpoints == {}
+
+
+# ---------------------------------------------------------------- M10 迁移切映射
+
+
+class _FakeSession:
+    """MappingTable 单测用 session：记录 UPDATE 语句 + get_space_mapping 查询。"""
+
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, tuple]] = []
+
+    def execute(self, statement, parameters=None):
+        self.statements.append((statement, parameters))
+        if "SELECT" in statement and "spaces" in statement:
+            row = type(
+                "Row",
+                (),
+                {
+                    "space_id": "sp1",
+                    "cell_id": "cell-1",
+                    "ex_cluster_id": "ex-local",
+                    "pulsar_cluster_id": "p",
+                    "status": "active",
+                    "tier": "cold",
+                    "space_type": None,
+                },
+            )()
+            return type("Rs", (), {"one": lambda self: row})()
+        return type("Rs", (), {"one": lambda self: None})()
+
+
+def test_update_space_cell():
+    """M10：迁移切映射只改归属字段（cell_id/ex_cluster_id），不动 status/tier。"""
+    from lethefield_clients import MappingTableControlPlaneStore
+
+    session = _FakeSession()
+    store = MappingTableControlPlaneStore(session)
+    store.update_space_cell("sp1", "cell-2", "ex-local")
+    update = [s for s in session.statements if s[0].startswith("UPDATE")]
+    assert len(update) == 1
+    statement, params = update[0]
+    assert "SET cell_id = %s, ex_cluster_id = %s" in statement
+    assert "status" not in statement.split("SET")[1]  # 状态翻转由迁移流水线显式执行
+    assert params == ("cell-2", "ex-local", "sp1")

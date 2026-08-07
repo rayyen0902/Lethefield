@@ -99,9 +99,22 @@ def provision_space(
                 ),
             )
         )
-        # 2. Pulsar namespace（全局集群池）
+        # 2. Pulsar namespace（全局集群池）+ namespace 级配额/策略（v0.7 选型核心理由落地）
         pulsar_admin.ensure_namespace(
             deps.config.pulsar_admin_url, deps.config.pulsar_tenant, space_id
+        )
+        pulsar_admin.set_retention(
+            deps.config.pulsar_admin_url,
+            deps.config.pulsar_tenant,
+            space_id,
+            minutes=deps.config.pulsar_namespace_retention_minutes,
+            size_mb=deps.config.pulsar_namespace_retention_size_mb,
+        )
+        pulsar_admin.set_backlog_quota(
+            deps.config.pulsar_admin_url,
+            deps.config.pulsar_tenant,
+            space_id,
+            quota_mb=deps.config.pulsar_namespace_backlog_quota_mb,
         )
         rollbacks.append(
             (

@@ -15,6 +15,7 @@ members = [
     "lethefield-clock-monitor",
     "lethefield-decision-log",
     "lethefield-fs",
+    "lethefield-ingest-dms",
     "lethefield-logschema",
     "lethefield-metrics",
     "lethefield-rms",
@@ -740,6 +741,7 @@ dev = [
     { name = "lethefield-clock-monitor" },
     { name = "lethefield-decision-log" },
     { name = "lethefield-fs" },
+    { name = "lethefield-ingest-dms" },
     { name = "lethefield-logschema" },
     { name = "lethefield-metrics" },
     { name = "lethefield-rms" },
@@ -760,6 +762,7 @@ dev = [
     { name = "lethefield-clock-monitor", editable = "ops/clock_monitor" },
     { name = "lethefield-decision-log", editable = "ops/decision_log" },
     { name = "lethefield-fs", editable = "services/fs" },
+    { name = "lethefield-ingest-dms", editable = "ops/ingest_dms" },
     { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
     { name = "lethefield-rms", editable = "services/rms" },
@@ -892,6 +895,31 @@ requires-dist = [
 ]
 
 [[package]]
+name = "lethefield-ingest-dms"
+version = "0.1.0"
+source = { editable = "ops/ingest_dms" }
+dependencies = [
+    { name = "cassandra-driver" },
+    { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
+    { name = "lethefield-metrics" },
+    { name = "pulsar-client" },
+    { name = "redis" },
+    { name = "requests" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cassandra-driver", specifier = ">=3.29" },
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
+    { name = "lethefield-metrics", editable = "libs/metrics" },
+    { name = "pulsar-client", specifier = ">=3.4" },
+    { name = "redis", specifier = ">=5.0" },
+    { name = "requests", specifier = ">=2.31" },
+]
+
+[[package]]
 name = "lethefield-logschema"
 version = "0.1.0"
 source = { editable = "libs/logschema" }
@@ -937,7 +965,9 @@ dependencies = [
     { name = "elasticsearch" },
     { name = "gremlinpython" },
     { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
     { name = "lethefield-rms" },
+    { name = "pulsar-client" },
     { name = "requests" },
 ]
 
@@ -947,7 +977,9 @@ requires-dist = [
     { name = "elasticsearch", specifier = ">=8.13" },
     { name = "gremlinpython", specifier = ">=3.7" },
     { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-rms", editable = "services/rms" },
+    { name = "pulsar-client", specifier = ">=3.4" },
     { name = "requests", specifier = ">=2.31" },
 ]
 

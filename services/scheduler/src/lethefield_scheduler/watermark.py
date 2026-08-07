@@ -86,9 +86,14 @@ def refresh_cell(
 
 def select_cell(
     store: MappingTableControlPlaneStore,
+    *,
+    exclude: frozenset[str] = frozenset(),
 ) -> CellInfo:
-    """选水位最低的 open Cell（最大维水位最小者）；无 open Cell 抛 NoOpenCellError。"""
-    open_cells = store.list_cells(WatermarkState.OPEN)
+    """选水位最低的 open Cell（最大维水位最小者）；无 open Cell 抛 NoOpenCellError。
+
+    `exclude`：迁移选目标 Cell 时排除源 Cell（M10）——迁到自己不算迁移。
+    """
+    open_cells = [c for c in store.list_cells(WatermarkState.OPEN) if c.cell_id not in exclude]
     if not open_cells:
         raise NoOpenCellError("没有 open 状态的 Cell，停止新分配（先扩容再开通）")
 

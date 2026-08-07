@@ -27,6 +27,7 @@ from lethefield_clients import (
     MappingCache,
     MappingTableControlPlaneStore,
     SpaceNotFoundError,
+    SpaceStatus,
     cassandra_cluster,
     es_client,
     ex_cassandra_cluster,
@@ -86,7 +87,7 @@ def _make_background_appender(ctx: ApiContext) -> MetaAppender:
     def append(**kwargs) -> None:
         def run() -> None:
             try:
-                ex_ingest.append_meta(ctx.ex_session, **kwargs)
+                ex_ingest.append_meta(ctx.ex_session, redis=ctx.redis, **kwargs)
             except Exception:
                 logger.warning("EX 元事件追加失败（fire-and-forget）: %s", kwargs, exc_info=True)
 
@@ -115,6 +116,16 @@ def _require_valid_space(space_id: str) -> None:
         raise ApiError(ErrorCode.BAD_REQUEST, str(exc)) from None
 
 
+def _require_not_migrating(ctx: ApiContext, space_id: str) -> None:
+    """迁移窗口内写操作明确失败（M10，设计文档 §18.3：生产者收到明确错误并重试缓冲）。
+
+    复用 429 rate_limited 契约码（"稍后重试"语义；新增错误码属契约变更，不走）。
+    retrieve 只读不受影响——迁移是只读窗口，读在源 Cell 持续服务到清理前。
+    """
+    if ctx.mapping_cache.get_space_mapping(space_id).status is SpaceStatus.MIGRATING:
+        raise ApiError(ErrorCode.RATE_LIMITED, f"space {space_id} 迁移中，写入暂停，请缓冲重试")
+
+
 def record(
     ctx: ApiContext,
     claims: Claims,
@@ -128,6 +139,7 @@ def record(
     require_space(claims, space_id)
     _require_valid_space(space_id)
     _resolve_gname(ctx, space_id)  # 未开通 space fail-closed（M9）
+    _require_not_migrating(ctx, space_id)  # M10：迁移窗口写入明确失败
     event_id, n = ex_ingest.append_experience(
         ctx.ex_session,
         ctx.redis,
@@ -154,6 +166,7 @@ def flag_conflict(
     require_space(claims, space_id)
     _require_valid_space(space_id)
     _resolve_gname(ctx, space_id)  # 未开通 space fail-closed（M9）
+    _require_not_migrating(ctx, space_id)  # M10：迁移窗口写入明确失败
     event_id, n = ex_ingest.append_experience(
         ctx.ex_session,
         ctx.redis,
@@ -176,6 +189,7 @@ def reinforce(ctx: ApiContext, claims: Claims, *, space_id: str, node_key: str) 
     require_space(claims, space_id)
     _require_valid_space(space_id)
     gname = _resolve_gname(ctx, space_id)
+    _require_not_migrating(ctx, space_id)  # M10：迁移窗口写入明确失败（含 RMS 旁路）
     n_now = ex_ingest.n_now(ctx.redis, ctx.ex_session, space_id=space_id)
     state = ff.apply_reinforce(
         ctx.gremlin, gname, space_id=space_id, node_key=node_key, n_now=n_now

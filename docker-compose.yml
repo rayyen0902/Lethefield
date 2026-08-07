@@ -96,6 +96,66 @@ services:
       - ./deploy/janusgraph/gremlin-server.yaml:/etc/opt/janusgraph/janusgraph-server.yaml:ro
       - ./deploy/janusgraph/janusgraph-server.properties:/opt/janusgraph/conf/gremlin-server/janusgraph-server.properties:ro
 
+  # ---------------------------------------------------------------- M10 cell2 profile
+  # 迁移演练用第二 Cell（定案：按需起，默认不进 CI——`docker compose --profile cell2 up -d`）。
+  # heap 合计 ~1.3G 是上限，勿调大（colima VM 10GiB 已踩过 OOM，见 AGENTS.md/工作日志）。
+  cassandra-cell-2:
+    image: cassandra:4.1
+    profiles: ["cell2"]
+    environment:
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+      CASSANDRA_RPC_ADDRESS: "0.0.0.0"
+      CASSANDRA_BROADCAST_RPC_ADDRESS: cassandra-cell-2
+      CASSANDRA_CLUSTER_NAME: lethefield-cell-2
+    ports:
+      - "9142:9042"
+    volumes:
+      - cassandra-cell-2-data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  es-graph-2:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    profiles: ["cell2"]
+    environment:
+      cluster.name: lethefield-graph-2
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms256m -Xmx256m
+    ports:
+      - "9300:9200"
+    volumes:
+      - es-graph-2-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  janusgraph-2:
+    image: janusgraph/janusgraph:1.0.0
+    profiles: ["cell2"]
+    environment:
+      JAVA_OPTIONS: -Xms256m -Xmx512m
+    depends_on:
+      cassandra-cell-2:
+        condition: service_healthy
+      es-graph-2:
+        condition: service_healthy
+    ports:
+      - "8183:8182"
+    volumes:
+      # gremlin-server.yaml 与主 Cell 共用（无存储主机名）；ConfigurationManagementGraph
+      # 的存储配置走 cell2 变体 properties（指向 cassandra-cell-2 / es-graph-2）。
+      - ./deploy/janusgraph/gremlin-server.yaml:/etc/opt/janusgraph/janusgraph-server.yaml:ro
+      - ./deploy/janusgraph/janusgraph-server-cell2.properties:/opt/janusgraph/conf/gremlin-server/janusgraph-server.properties:ro
+
   pulsar:
     image: apachepulsar/pulsar:3.3.2
     command: bin/pulsar standalone
@@ -136,8 +196,10 @@ services:
 
 volumes:
   cassandra-cell-data:
+  cassandra-cell-2-data:
   cassandra-ex-data:
   es-graph-data:
+  es-graph-2-data:
   es-ops-data:
   pulsar-data:
   postgres-data:

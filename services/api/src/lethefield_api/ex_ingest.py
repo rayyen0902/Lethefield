@@ -25,6 +25,7 @@ from lethefield_clients.ex_n import (
     keyspace_name,
     n_key,
     n_now,
+    touch_last_write,
 )
 
 __all__ = [
@@ -64,6 +65,7 @@ def append_experience(
         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         (n, event_id, content, agent_actor_id, account_id, tau_ms, ref_conflict, datetime.now(UTC)),
     )
+    touch_last_write(redis, space_id, now=datetime.now(UTC))  # M10 DMS：成功摄入才刷新
     return str(event_id), n
 
 
@@ -96,12 +98,15 @@ def append_meta(
     account_id: str,
     count: int = 1,
     merge_window_ms: int | None = None,
+    redis: redis_lib.Redis | None = None,
 ) -> str:
     """追加元事件（reinforce 等）：**不分配 n**——元事件只留痕、不推进事件距离。
 
     时间窗合并（M7）：`merge_window_ms` 非 None 时，窗口内同节点同类事件合并为一笔——
     同主键 UPDATE（count 累加、n_at_event 刷新），不产生新行。service.reinforce
     传 `REINFORCE_MERGE_WINDOW_MS`；纠错是经验事件不经此路径（每笔必须精确）。
+
+    `redis` 非 None 时落库成功后刷新最近写入时间（M10 DMS 写入新鲜度数据源）。
     """
     ks = keyspace_name(space_id)
     now = datetime.now(UTC)
@@ -115,6 +120,8 @@ def append_meta(
                 "WHERE node_key = %s AND created_at = %s AND event_id = %s",
                 (row.count + count, n_at_event, node_key, row.created_at, row.event_id),
             )
+            if redis is not None:
+                touch_last_write(redis, space_id, now=datetime.now(UTC))
             return str(row.event_id)
     event_id = uuid.uuid4()
     session.execute(
@@ -132,4 +139,6 @@ def append_meta(
             account_id,
         ),
     )
+    if redis is not None:
+        touch_last_write(redis, space_id, now=datetime.now(UTC))
     return str(event_id)

@@ -10,7 +10,12 @@ import pytest
 from lethefield_api import ex_ingest, service
 from lethefield_api.auth import Claims
 from lethefield_api.errors import ApiError, ErrorCode
-from lethefield_clients import MappingCache, SpaceMapping, StaticControlPlaneStore
+from lethefield_clients import (
+    MappingCache,
+    SpaceMapping,
+    SpaceStatus,
+    StaticControlPlaneStore,
+)
 from lethefield_rms import ff
 from lethefield_rms.retrieve import EdgeRecord, NodeItem, RetrievalResult
 
@@ -182,6 +187,57 @@ class TestSpaceIdValidation:
         with pytest.raises(ApiError) as exc:
             service.retrieve(ctx, claims, space_id="Bad", query_text="q")
         assert exc.value.code == ErrorCode.BAD_REQUEST
+
+
+class TestMigratingSpace:
+    """M10：迁移窗口内写操作 429 明确失败（生产者重试缓冲语义），retrieve 只读放行。"""
+
+    def _migrating_ctx(self, **overrides) -> service.ApiContext:
+        store = StaticControlPlaneStore.local()
+        store.register_space(
+            SpaceMapping(
+                space_id="sp_1",
+                cell_id="cell-local",
+                ex_cluster_id="ex-local",
+                pulsar_cluster_id="pulsar-local",
+            )
+        )
+        store.update_space_status("sp_1", SpaceStatus.MIGRATING)
+        return _ctx(mapping_cache=MappingCache(store), **overrides)
+
+    def test_record_rejected_429(self):
+        ctx = self._migrating_ctx()
+        with pytest.raises(ApiError) as exc:
+            service.record(ctx, _claims(), space_id="sp_1", content="x")
+        assert exc.value.code == ErrorCode.RATE_LIMITED
+        assert "迁移中" in exc.value.message
+        assert ctx.ex_session.executed == []  # 零副作用
+
+    def test_flag_conflict_rejected_429(self):
+        ctx = self._migrating_ctx()
+        with pytest.raises(ApiError) as exc:
+            service.flag_conflict(ctx, _claims(), space_id="sp_1", content="x", ref_conflict="n0")
+        assert exc.value.code == ErrorCode.RATE_LIMITED
+        assert ctx.ex_session.executed == []
+
+    def test_reinforce_rejected_429(self, monkeypatch):
+        appended = []
+        ctx = self._migrating_ctx(meta_appender=lambda **kw: appended.append(kw))
+        monkeypatch.setattr(
+            service.ff, "apply_reinforce", lambda *a, **kw: ff.PhiState(0.7, 1, 2, 1, 0, 0)
+        )
+        with pytest.raises(ApiError) as exc:
+            service.reinforce(ctx, _claims(), space_id="sp_1", node_key="n1")
+        assert exc.value.code == ErrorCode.RATE_LIMITED
+        assert appended == []  # EX 元事件未产生
+
+    def test_retrieve_allowed_readonly(self, monkeypatch):
+        ctx = self._migrating_ctx()
+        monkeypatch.setattr(
+            service, "rms_retrieve", lambda *a, **kw: RetrievalResult(nodes=[], edges=[])
+        )
+        response = service.retrieve(ctx, _claims(), space_id="sp_1", query_text="q")
+        assert response == {"nodes": [], "edges": []}  # 只读窗口：读不受影响
 
 
 class TestUnprovisionedSpace:

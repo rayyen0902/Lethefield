@@ -315,6 +315,19 @@ class MappingTableControlPlaneStore(ControlPlaneStore):
             (space_id,),
         )
 
+    def update_space_cell(self, space_id: str, cell_id: str, ex_cluster_id: str) -> None:
+        """迁移切映射（M10）：space 归属 Cell / EX 集群一次性切换。
+
+        只改归属字段，不动 status/tier——状态翻转（migrating→active）由调度器
+        迁移流水线显式执行，两步分开便于失败点定位。
+        """
+        self.get_space_mapping(space_id)  # 不存在则 fail-closed
+        self._session.execute(
+            f"UPDATE {CONTROL_KEYSPACE}.{SPACES_TABLE} "
+            "SET cell_id = %s, ex_cluster_id = %s WHERE space_id = %s",
+            (cell_id, ex_cluster_id, space_id),
+        )
+
     def list_space_mappings(self) -> list[SpaceMapping]:
         """全量映射（备份/导出走此；控制面规模，不涉及业务数据扫描）。"""
         rows = self._session.execute(

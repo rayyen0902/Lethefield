@@ -13,6 +13,7 @@ dev = [
     "lethefield-clock-monitor",
     "lethefield-decision-log",
     "lethefield-fs",
+    "lethefield-ingest-dms",
     "lethefield-logschema",
     "lethefield-metrics",
     "lethefield-rms",
@@ -36,6 +37,7 @@ lethefield-clients = { workspace = true }
 lethefield-clock-monitor = { workspace = true }
 lethefield-decision-log = { workspace = true }
 lethefield-fs = { workspace = true }
+lethefield-ingest-dms = { workspace = true }
 lethefield-logschema = { workspace = true }
 lethefield-metrics = { workspace = true }
 lethefield-rms = { workspace = true }

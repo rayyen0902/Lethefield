@@ -27,6 +27,8 @@ from lethefield_api.auth import Claims
 from lethefield_api.service import ApiContext
 from lethefield_clients import (
     CONTROL_KEYSPACE,
+    CONTROL_NAMESPACE,
+    TRAINING_TENANT,
     MappingCache,
     MappingTableControlPlaneStore,
     SpaceNotFoundError,
@@ -39,6 +41,7 @@ from lethefield_clients import (
     gremlin_client,
     keyspace_name,
     local_cell,
+    pulsar_client,
     redis_client,
     restore_jsonl,
 )
@@ -47,6 +50,7 @@ from lethefield_rms.schema import ensure_graph_schema
 from lethefield_rms.vectors import VECTORS_INDEX, ensure_vectors_index, index_vector
 from lethefield_rms.writer import create_event_node
 from lethefield_scheduler import provision as provision_mod
+from lethefield_scheduler import pulsar_admin
 from lethefield_scheduler.config import SchedulerConfig
 from lethefield_scheduler.destroy import DestroyDeps, destroy_space
 from lethefield_scheduler.provision import ProvisionDeps, ProvisionError, provision_space
@@ -74,6 +78,10 @@ def stack():
     gremlin = gremlin_client(GREMLIN_URL, GREMLIN_ALIAS)
     es = es_client(ES_GRAPH_URL)
     ensure_vectors_index(es, index=VECTORS_INDEX, dims=4)
+    # 契约 5 广播通道：训练控制 namespace 就绪 + 真实 Pulsar 客户端（M10 起 destroy 默认走真实广播）
+    config = SchedulerConfig()
+    pulsar_admin.ensure_namespace(config.pulsar_admin_url, TRAINING_TENANT, CONTROL_NAMESPACE)
+    pulsar = pulsar_client()
     yield SimpleNamespace(
         store=store,
         cell_session=cell_session,
@@ -81,9 +89,11 @@ def stack():
         gremlin=gremlin,
         es=es,
         redis=redis_client(),
-        config=SchedulerConfig(),
+        config=config,
+        pulsar=pulsar,
     )
     store.update_cell_watermark(local_cell().cell_id, {}, WatermarkState.OPEN)  # 水位用例改动复原
+    pulsar.close()
     gremlin.close()
     es.close()
     cell_cluster.shutdown()
@@ -108,6 +118,7 @@ def _destroy_deps(stack) -> DestroyDeps:
         ex_session=stack.ex_session,
         es=stack.es,
         config=stack.config,
+        pulsar=stack.pulsar,  # 契约 5 真实广播通道
     )
 
 

@@ -2,12 +2,11 @@
 
 ## 项目阶段
 
-M0–M9（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
-FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租户调度器）已完成并验证
-（M0–M9 CI 全绿）。
-**下一个模块：M10 EX 存储与 Pulsar 归属 + 三存储生命周期流水线**（开发文档 §11：
-EX 集群池与 Cell 物理独立验收、开通/迁移/注销流水线终版、训练管线销毁广播真实接口
-（M9 留的注入点）、EX 摄入 Dead Man's Switch、跨 Cell 迁移演练实测只读窗口）。
+M0–M10（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
+FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租户调度器 /
+EX 存储与 Pulsar 归属 + 三存储生命周期流水线）已完成并验证（M0–M10 CI 全绿）。
+**下一个模块：M11 训练数据管线（1.0 最小实现）**（开发文档 §12：四入料口、R1–R3 高价值
+时刻判定、授权注册表入 topic 前拦截、space_ref 成组定位的可撤回性、契约 5 销毁指令真实消费）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -94,6 +93,23 @@ EX 集群池与 Cell 物理独立验收、开通/迁移/注销流水线终版、
 - bind mount 内容变更不触发 compose recreate，`docker compose restart <svc>` 才重读配置；
   JanusGraph 已配 `graph.replace-instance-if-exists=true` 与 `evaluationTimeout: 180000`
   （容器重建撞实例注册冲突 / 冷图创建在全量负载下超默认 30s，两处实测）。
+- M10 定案：契约 5（训练管线销毁指令）单点在 `libs/clients/training_control.py`
+  （`space_ref_of` 不透明哈希 M11 样本 schema 复用；topic = 训练 tenant
+  `lethefield-training/control/space-destroy`，durable 订阅 `training-destroy-sink`）；
+  destroy 第 4 步默认真实广播（等 broker ack，失败中止不进第 5 步，映射留 destroying 可重试）。
+  DMS 在 `ops/ingest_dms`：监控 tenant probe topic 探针（page 级，**禁向 space namespace
+  发探针**）+ 训练控制 backlog 停滞（page 级）+ space 写入新鲜度（observation 级，
+  Redis `ex:last_write:{space}` 由摄入路径成功写入后维护，翻转边告警）。
+  迁移流水线 `scheduler/migrate.py`：等价校验对齐"目标图 == EX 重放计划"（EX 唯一 SoT，
+  源图可能含重放不覆盖的 consolidation 边）；写路径 migrating → 429 rate_limited
+  （复用现有契约码，retrieve 放行）；本地档演练 = compose `cell2` profile（按需起、
+  默认不进 CI，heap ~1.3G 注释锁死），实测只读窗口 15.6s（记录
+  `deploy/baselines/m10_migration_drill.jsonl`）；EX 跨集群 sstableloader 与 API 多 Cell
+  连接路由是已登记缺口。
+- pulsar-client 的 `receive` 参数名是 `timeout_millis`（写错被宽泛 except 吞成假阴性——
+  consumer 循环只捕 `pulsar.Timeout`）；Pulsar 412：backlog quota 必须 < retention size。
+- **gremlin_python 客户端基于 tornado 单连接，跨线程共享同一 Client 会死锁**——
+  并发线程各用各的连接（M10 迁移演练实测挂死根因）。
 - spike 遗留容器（spike-elasticsearch 等）已停止但未删除，端口 8182/9042/9200 若被占先检查它们。
 - colima VM 内存不足会被内核 OOM killer 杀 JanusGraph（exit 137，dmesg 可见
   "Out of memory: Killed process (java)"）——表现为 gremlin 连接拒绝、后续模块连锁
@@ -124,6 +140,10 @@ EX 集群池与 Cell 物理独立验收、开通/迁移/注销流水线终版、
 | `uv run python -m lethefield_scheduler destroy <space>` | M9：注销 space（先驱逐计算实例再删存储，无残留校验） |
 | `uv run python -m lethefield_scheduler export <file>` / `restore <file>` | M9：映射表备份 / 恢复（1.0 验收硬指标） |
 | `uv run python -m lethefield_scheduler watermark [--cell ID]` / `list` | M9：水位刷新 / 映射一览 |
+| `uv run python -m lethefield_scheduler migrate <space> [--to-cell ID]` | M10：跨 Cell 迁移（实测只读窗口入报告） |
+| `uv run python -m lethefield_scheduler.training_control_sink [--once]` | M10：契约 5 销毁指令最小接收 consumer |
+| `uv run python -m lethefield_ingest_dms [--once]` | M10：EX 摄入 DMS 巡检（探针/backlog/新鲜度），page 告警退出码 1 |
+| `docker compose --profile cell2 up -d` 后 `uv run pytest tests/integration/test_m10_migration_drill.py` | M10：跨 Cell 迁移演练（按需，不占常驻内存；默认 CI 自动 skip） |
 
 ## 约定
 

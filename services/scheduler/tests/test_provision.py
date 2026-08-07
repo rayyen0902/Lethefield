@@ -90,6 +90,9 @@ def events(monkeypatch):
         "ensure_namespace",
         lambda url, tenant, ns: log.append("pulsar"),
     )
+    # namespace 策略（retention/backlog quota）：本套件关心编排顺序，策略调用打平为 no-op
+    monkeypatch.setattr(provision_mod.pulsar_admin, "set_retention", lambda *a, **k: None)
+    monkeypatch.setattr(provision_mod.pulsar_admin, "set_backlog_quota", lambda *a, **k: None)
     monkeypatch.setattr(
         provision_mod,
         "ensure_graph_schema",

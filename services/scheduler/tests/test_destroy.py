@@ -9,6 +9,7 @@ from lethefield_clients import (
 )
 from lethefield_scheduler import destroy as destroy_mod
 from lethefield_scheduler.destroy import DestroyDeps, DestroyError, destroy_space
+from lethefield_scheduler.destroy_broadcast import BroadcastError
 
 
 class _FakeStore:
@@ -138,7 +139,7 @@ def test_destroy_invalidates_cache(monkeypatch):
     deps = _deps(events)
     cache = MappingCache(deps.store, ttl_seconds=1000)
     cache.get_space_mapping("sp1")  # 预热
-    destroy_space(deps, "sp1", cache=cache)
+    destroy_space(deps, "sp1", cache=cache, broadcast_destroy=lambda sid: None)
     with pytest.raises(SpaceNotFoundError):
         cache.get_space_mapping("sp1")  # 缓存已失效，直达 store 抛 404
 
@@ -158,7 +159,7 @@ def test_destroy_residue_raises(monkeypatch):
     )
     deps = _deps(events, cell_residue=True)  # 图 keyspace DROP 未生效
     with pytest.raises(DestroyError, match="残留"):
-        destroy_space(deps, "sp1")
+        destroy_space(deps, "sp1", broadcast_destroy=lambda sid: None)
 
 
 def test_destroy_es_residue_raises(monkeypatch):
@@ -166,7 +167,7 @@ def test_destroy_es_residue_raises(monkeypatch):
     monkeypatch.setattr(destroy_mod.pulsar_admin, "delete_namespace", lambda *a: None)
     deps = _deps(events, es_count=3)
     with pytest.raises(DestroyError, match="rms_vectors"):
-        destroy_space(deps, "sp1")
+        destroy_space(deps, "sp1", broadcast_destroy=lambda sid: None)
 
 
 def test_destroy_graph_config_residue_raises(monkeypatch):
@@ -174,14 +175,30 @@ def test_destroy_graph_config_residue_raises(monkeypatch):
     monkeypatch.setattr(destroy_mod.pulsar_admin, "delete_namespace", lambda *a: None)
     deps = _deps(events, graph_names=["sp1"])  # removeConfiguration 未生效
     with pytest.raises(DestroyError, match="ConfiguredGraphFactory"):
-        destroy_space(deps, "sp1")
+        destroy_space(deps, "sp1", broadcast_destroy=lambda sid: None)
 
 
-def test_default_broadcast_is_logging_not_noop(monkeypatch, caplog):
+def test_broadcast_failure_aborts_before_step5(monkeypatch):
+    """契约 5 硬约束 1：广播最终失败 → 告警留痕并中止，禁止静默进入第 5 步
+    （unregister 不得执行，映射保留 destroying 可重试）。"""
+    events: list[str] = []
+    monkeypatch.setattr(
+        destroy_mod.pulsar_admin, "delete_namespace", lambda *a: events.append("pulsar:delete")
+    )
+
+    def failing_broadcast(space_id: str) -> None:
+        raise BroadcastError("broker 不可达")
+
+    with pytest.raises(BroadcastError):
+        destroy_space(_deps(events), "sp1", broadcast_destroy=failing_broadcast)
+    assert "unregister" not in events  # 第 5 步未执行
+    assert events[-1] == "drop:ex_ks"  # 步骤 1-3 已完成（幂等，重试可续）
+
+
+def test_no_pulsar_channel_fails_closed(monkeypatch):
+    """契约 5：默认广播必须是真实链路——无 Pulsar 通道时第 4 步失败，不是留空占位。"""
     events: list[str] = []
     monkeypatch.setattr(destroy_mod.pulsar_admin, "delete_namespace", lambda *a: None)
-    import logging
-
-    with caplog.at_level(logging.INFO, logger="lethefield_scheduler.destroy"):
-        destroy_space(_deps(events), "sp1")  # 不传 broadcast_destroy
-    assert any("sp1" in r.message for r in caplog.records)
+    with pytest.raises(BroadcastError, match="Pulsar 通道"):
+        destroy_space(_deps(events), "sp1")  # 不传 broadcast_destroy 且 deps.pulsar=None
+    assert "unregister" not in events

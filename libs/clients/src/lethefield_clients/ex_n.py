@@ -15,7 +15,7 @@ M7 起本模块同时是 EX 读访问层（ExEvent/MetaEvent + list_*）：消�
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 import redis as redis_lib
 from cassandra.cluster import Session
@@ -40,7 +40,15 @@ def keyspace_name(space_id: str) -> str:
 
 def ensure_ex_keyspace(session: Session, space_id: str) -> None:
     """幂等建 EX keyspace + 两表（M9 起为调度器开通流水线 EX 步的实现点）。"""
-    ks = keyspace_name(space_id)
+    ensure_ex_keyspace_named(session, keyspace_name(space_id))
+
+
+def ensure_ex_keyspace_named(session: Session, ks: str) -> None:
+    """按显式 keyspace 名建 EX schema（M10 迁移流水线的 scratch/目标 keyspace 用）。
+
+    DDL 单点不变——正常路径仍走 ensure_ex_keyspace（space_id 派生命名），
+    本变体只服务迁移/导出工具链，不对业务路径开放。
+    """
     session.execute(
         f"CREATE KEYSPACE IF NOT EXISTS {ks} "
         "WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
@@ -81,6 +89,30 @@ def ensure_ex_keyspace(session: Session, space_id: str) -> None:
 def n_key(space_id: str) -> str:
     """该 space 当前事件序号的 Redis 键（INCR 分配点与本读取共用此约定）。"""
     return f"ex:n:{space_id}"
+
+
+def last_write_key(space_id: str) -> str:
+    """该 space 最近一次成功摄入时间的 Redis 键（M10 DMS 写入新鲜度的数据源）。"""
+    return f"ex:last_write:{space_id}"
+
+
+def touch_last_write(redis: redis_lib.Redis, space_id: str, *, now: datetime) -> None:
+    """摄入路径在事件落库确认后调用：刷新最近写入时间（ISO 格式 UTC）。
+
+    只许摄入路径（ex_ingest）在**写入成功后**调用——DMS 的"活跃"语义锚点是
+    成功摄入，不是尝试摄入（设计文档 §7.5.1：不以"看起来在运行"为证据）。
+    """
+    redis.set(last_write_key(space_id), now.isoformat())
+
+
+def last_write_at(redis: redis_lib.Redis, space_id: str) -> datetime | None:
+    """读最近成功摄入时间；从未写入返回 None（DMS 巡检读取入口）。"""
+    raw = redis.get(last_write_key(space_id))
+    if raw is None:
+        return None
+    text = raw.decode() if isinstance(raw, bytes) else raw
+    parsed = datetime.fromisoformat(text)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def n_now(redis: redis_lib.Redis, session: Session, *, space_id: str) -> int:
