@@ -50,6 +50,8 @@ testpaths = ["libs", "ops", "services"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# spike/ 是历史验证脚本（M0 起存档，非维护代码），不进 lint/format 范围
+extend-exclude = ["spike"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
