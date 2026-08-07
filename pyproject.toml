@@ -18,6 +18,7 @@ dev = [
     "lethefield-metrics",
     "lethefield-rms",
     "lethefield-scheduler",
+    "lethefield-training",
     "gremlinpython>=3.7",
     "requests>=2.31",
     "ruff>=0.6",
