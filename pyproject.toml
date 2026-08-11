@@ -16,6 +16,7 @@ dev = [
     "lethefield-ingest-dms",
     "lethefield-logschema",
     "lethefield-metrics",
+    "lethefield-metrics-exporter",
     "lethefield-rms",
     "lethefield-scheduler",
     "lethefield-training",
@@ -41,6 +42,7 @@ lethefield-fs = { workspace = true }
 lethefield-ingest-dms = { workspace = true }
 lethefield-logschema = { workspace = true }
 lethefield-metrics = { workspace = true }
+lethefield-metrics-exporter = { workspace = true }
 lethefield-rms = { workspace = true }
 lethefield-scheduler = { workspace = true }
 lethefield-training = { workspace = true }

@@ -3,7 +3,7 @@ name = "lethefield-logschema"
 version = "0.1.0"
 description = "结构化日志事件 schema（M12 日志管线原料，space 粒度明细统一格式）"
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2.0"]
+dependencies = ["pydantic>=2.0", "elasticsearch>=8.13,<9"]
 
 [build-system]
 requires = ["hatchling"]

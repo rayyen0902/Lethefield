@@ -1,7 +1,9 @@
 """CLI：python -m lethefield_training worker|scrub|submit-incident|ex-feed"""
 
 import argparse
+import os
 import sys
+import time
 from pathlib import Path
 
 from lethefield_clients import (
@@ -9,15 +11,24 @@ from lethefield_clients import (
     FeedEvent,
     FeedKind,
     FeedSource,
+    es_client,
     ex_cassandra_cluster,
     make_feed_publisher,
     pulsar_client,
 )
+from lethefield_logschema import configure as logschema_configure
+from lethefield_metrics import metrics_port_from_env, start_metrics_server
 
-from lethefield_training import ex_feed, worker
+from lethefield_training import ex_feed, recall_filter, worker
 from lethefield_training.config import TrainingConfig
 from lethefield_training.hot_store import HotSampleStore
 from lethefield_training.recall_window import RecallWindow
+
+# training worker /metrics 暴露口默认端口（M12 端口约定）
+DEFAULT_METRICS_PORT = 9102
+
+# es-ops 日志集群地址（shipper 同一 env，口径单点在 logschema es_sink）
+_OPS_ES_URL = os.environ.get("LETHEFIELD_OPS_ES_URL", "http://localhost:9201")
 
 
 def _worker_deps(config: TrainingConfig) -> worker.WorkerDeps:
@@ -50,6 +61,13 @@ def main(argv: list[str] | None = None) -> int:
     p_ex = sub.add_parser("ex-feed", help="④ 入料口：EX 只读派生纠错对（显式单 space）")
     p_ex.add_argument("--space", required=True)
 
+    p_filter = sub.add_parser(
+        "recall-filter",
+        help="③ 入料口过滤器（M12 定案形态）：es-ops 召回明细 → 授权闸门 → 训练 topic",
+    )
+    p_filter.add_argument("--once", action="store_true", help="单轮后退出（测试/巡检用）")
+    p_filter.add_argument("--interval", type=float, default=5.0, help="轮询节奏（秒）")
+
     args = parser.parse_args(argv)
     config = TrainingConfig.from_env()
 
@@ -59,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
             deps = _worker_deps(config)
             if args.once:
                 return 0 if worker.run_once(client, deps) >= 0 else 1
+            # M12：常驻形态接日志管线 + /metrics 暴露口（一次性 --once 不起）
+            logschema_configure()
+            start_metrics_server(metrics_port_from_env(DEFAULT_METRICS_PORT))
             worker.run_forever(client, deps)
             return 0
         finally:
@@ -103,6 +124,25 @@ def main(argv: list[str] | None = None) -> int:
             client.close()
         print(f"ex-feed: {count} correction pairs (space={args.space})")
         return 0
+    if args.command == "recall-filter":
+        es_ops = es_client(_OPS_ES_URL)
+        client = pulsar_client()
+        state_path = Path(config.hot_root) / "recall_filter_state.json"
+        try:
+            publish = make_feed_publisher(client)
+            registry = AuthRegistryStore()
+            while True:
+                recall_filter.run_once(
+                    es_ops,
+                    registry=registry,
+                    publish=publish,
+                    state_path=state_path,
+                )
+                if args.once:
+                    return 0
+                time.sleep(args.interval)
+        finally:
+            client.close()
     return 1
 
 

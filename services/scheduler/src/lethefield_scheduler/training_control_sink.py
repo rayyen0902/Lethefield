@@ -11,7 +11,6 @@ CLI：python -m lethefield_scheduler.training_control_sink [--once]
 """
 
 import argparse
-import sys
 from collections.abc import Callable
 
 import pulsar
@@ -22,6 +21,7 @@ from lethefield_clients import (
     pulsar_client,
 )
 from lethefield_logschema import LogEvent
+from lethefield_logschema import emit as logschema_emit
 from pulsar import Client
 
 
@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true", help="单轮排空后退出（测试/巡检用）")
     args = parser.parse_args(argv)
 
-    emit = lambda event: print(event.to_jsonl(), file=sys.stderr)  # noqa: E731
+    emit = lambda event: logschema_emit(event, sync=True)  # noqa: E731  (一次性 CLI 防丢尾部)
     client = pulsar_client()
     try:
         if args.once:

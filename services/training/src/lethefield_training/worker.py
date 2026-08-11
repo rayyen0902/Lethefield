@@ -11,7 +11,6 @@
 消息语义同 M10 sink：schema 不符/处置失败不 ack，留 broker 重投（不静默吞）。
 """
 
-import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,6 +30,7 @@ from lethefield_clients import (
     feed_topic,
 )
 from lethefield_logschema import LogEvent
+from lethefield_logschema import emit as emit_log
 from lethefield_metrics import counter
 from prometheus_client import REGISTRY
 from pulsar import Client
@@ -154,10 +154,18 @@ def process_feed_event(event: FeedEvent, deps: WorkerDeps) -> None:
 
     samples: list[TrainingSample] = []
     if event.kind is FeedKind.RECALL_DETAIL:
+        event_id = event.payload.get("event_id")
+        if not event_id:
+            raise ValueError("recall_detail 缺 event_id（M12 收口定案去重键，fail-closed）")
+        recalled_at_ms = int(event.emitted_at.timestamp() * 1000)
+        if not deps.window.mark_seen(event_id, at_ms=recalled_at_ms):
+            # at-least-once 重放：去重跳过（只计数，不发事件——重放可以是常态噪声）
+            FEED_DROPPED_TOTAL.labels(kind=str(event.kind), reason="duplicate").inc()
+            return
         deps.window.record(
             event.space_ref or "",
             event.payload["node_keys"],
-            recalled_at_ms=int(event.emitted_at.timestamp() * 1000),
+            recalled_at_ms=recalled_at_ms,
         )
     elif event.kind is FeedKind.CORRECTION_PAIR:
         sample = _sample_from_correction(event, deps)
@@ -270,4 +278,4 @@ def run_forever(client: Client, deps: WorkerDeps, *, idle_sleep: float = 1.0) ->
 
 
 def default_emit(event: LogEvent) -> None:
-    print(event.to_jsonl(), file=sys.stderr)
+    emit_log(event)

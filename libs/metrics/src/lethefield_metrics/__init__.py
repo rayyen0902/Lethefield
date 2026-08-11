@@ -6,6 +6,7 @@
 - 标签黑名单：space_id、node_key（防基数爆炸 + 守红线 1）
 """
 
+from lethefield_metrics.exposition import metrics_port_from_env, start_metrics_server
 from lethefield_metrics.registry import (
     LABEL_BLACKLIST,
     LABEL_WHITELIST,
@@ -22,4 +23,6 @@ __all__ = [
     "counter",
     "gauge",
     "histogram",
+    "metrics_port_from_env",
+    "start_metrics_server",
 ]

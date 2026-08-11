@@ -6,7 +6,7 @@
 import argparse
 import sys
 
-from lethefield_logschema import LogEvent
+from lethefield_logschema import LogEvent, emit
 
 from lethefield_clock_monitor import check_offsets, collect_all
 from lethefield_clock_monitor.check import DEFAULT_THRESHOLD_SECONDS
@@ -25,13 +25,13 @@ def main() -> int:
     alerts = check_offsets(samples, args.threshold)
     for alert in alerts:
         # 告警以结构化日志事件输出（告警通道选型属 M17 决策留痕项，此为事件源）
-        print(
+        emit(
             LogEvent(
                 service="clock-monitor",
                 event_type="clock_offset_alert",
                 payload={"alert": alert, "threshold_seconds": args.threshold},
-            ).to_jsonl(),
-            file=sys.stderr,
+            ),
+            sync=True,  # 一次性巡检进程：同步直写防退出丢失
         )
 
     if alerts:

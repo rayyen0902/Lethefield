@@ -8,11 +8,11 @@
    注册表项删除 + 处置动作进决策留痕。
 """
 
+import time
 import uuid
 from types import SimpleNamespace
 
 import pytest
-from lethefield_api import service as api_service
 from lethefield_api.ex_ingest import append_experience
 from lethefield_clients import (
     CONTROL_NAMESPACE,
@@ -28,6 +28,7 @@ from lethefield_clients import (
     FeedKind,
     FeedSource,
     ensure_ex_keyspace,
+    es_client,
     ex_cassandra_cluster,
     keyspace_name,
     make_feed_publisher,
@@ -37,11 +38,11 @@ from lethefield_clients import (
 )
 from lethefield_decision_log import DecisionLogStore
 from lethefield_logschema import LogEvent
-from lethefield_rms.retrieve import NodeItem, RetrievalResult
+from lethefield_logschema import emit as logschema_emit
 from lethefield_scheduler import pulsar_admin
 from lethefield_scheduler.config import SchedulerConfig
 from lethefield_scheduler.destroy_broadcast import make_broadcast
-from lethefield_training import worker
+from lethefield_training import recall_filter, worker
 from lethefield_training.config import TrainingConfig
 from lethefield_training.hot_store import HotSampleStore
 from lethefield_training.recall_window import RecallWindow
@@ -95,6 +96,8 @@ def stack(tmp_path_factory):
         redis=redis_client(),
         runtime=runtime,
         emitted=emitted,
+        # es-ops 日志集群（M12 日志管线；shipper 默认 URL 同一约定）
+        es_ops=es_client("http://localhost:9201"),
     )
     runtime.close()
     pulsar.close()
@@ -111,52 +114,112 @@ def _samples_of(store: HotSampleStore, space_ref: str | None) -> list[TrainingSa
     return [store.load_sample(e.file, e.sample_id) for e in store.manifest(space_ref)]
 
 
-# ---------------------------------------------------------------- ③ 授权闸门（入 topic 前）
+# ------------------------------------------------- ③ 授权闸门（入 topic 前，M12 定案形态）
 
 
-def test_recall_feed_intercepted_before_topic(stack):
-    """③ 生产侧闸门：未授权 → 不发布；grant → 发布；revoke → 再不发布。"""
+def _emit_recall_log(space_id: str, space_ref: str, node_keys: list[str]) -> None:
+    """模拟 API retrieve 的召回明细发射（M12：API 只发日志事件进 es-ops，不直发 topic）。"""
+    logschema_emit(
+        LogEvent(
+            service="lethefield-api",
+            event_type="retrieve_recall_detail",
+            space_id=space_id,
+            payload={
+                "event_id": uuid.uuid4().hex,
+                "space_ref": space_ref,
+                "node_keys": node_keys,
+                "theta": {"anchors": 1, "pool": 1, "returned": 1},
+                "query_class": "vector",
+                "stage_ms": {"knn": 1.0, "subgraph": 2.0, "ff_filter": 0.5},
+            },
+        ),
+        sync=True,
+    )
+
+
+def _wait_event_in_ops(es_ops, space_id: str, timeout_s: float = 15.0) -> None:
+    """等 es-ops 刷新可见（sync bulk 后 refresh 有近秒级延迟）。"""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        es_ops.indices.refresh(index="lethefield-logs-*")
+        resp = es_ops.search(
+            index="lethefield-logs-*",
+            body={
+                "query": {
+                    "bool": {
+                        "filter": [
+                            {"term": {"event_type": "retrieve_recall_detail"}},
+                            {"term": {"space_id": space_id}},
+                        ]
+                    }
+                }
+            },
+        )
+        if resp["hits"]["hits"]:
+            return
+        time.sleep(0.5)
+    raise TimeoutError(f"召回明细事件未在 es-ops 出现：{space_id}")
+
+
+def test_recall_filter_gate(stack):
+    """③ 定案形态（M12）：日志管线 → recall_filter 授权闸门 → 训练 topic。
+
+    未授权 → 拦截（入 topic 前）；grant → 转发（event_id 保留）；revoke → 再不转发。
+    """
     space_id = _sid("gate")
     space_ref = space_ref_of(space_id)
     published: list[FeedEvent] = []
-    ctx = SimpleNamespace(auth_registry=stack.registry, feed_publisher=published.append)
-    result = RetrievalResult(
-        nodes=[
-            NodeItem(
-                node_key="ev_gate1",
-                content="c",
-                tau=None,
-                s_effective=0.9,
-                relevance=1.0,
-                brief=False,
-            )
-        ],
-        edges=[],
-        stats={"anchors": 1, "pool": 1, "returned": 1},
-    )
+    state_path = stack.hot_root / "filter_state" / f"{space_id}.json"
 
-    api_service._emit_recall_detail(
-        ctx, space_id=space_id, result=result, query_text=None, query_vector=[0.1]
+    _emit_recall_log(space_id, space_ref, ["ev_gate1"])
+    _wait_event_in_ops(stack.es_ops, space_id)
+    assert (
+        recall_filter.run_once(
+            stack.es_ops,
+            registry=stack.registry,
+            publish=published.append,
+            state_path=state_path,
+        )
+        == 0
     )
     assert published == []  # 未授权：入 topic 前拦截
 
     stack.registry.grant(space_ref, [AuthScope.CALIBRATION])
-    api_service._emit_recall_detail(
-        ctx, space_id=space_id, result=result, query_text=None, query_vector=[0.1]
+    _emit_recall_log(space_id, space_ref, ["ev_gate2"])
+    _wait_event_in_ops(stack.es_ops, space_id)
+    assert (
+        recall_filter.run_once(
+            stack.es_ops,
+            registry=stack.registry,
+            publish=published.append,
+            state_path=state_path,
+        )
+        == 1  # 只转发新增授权后的事件（首轮被拦截的条目 checkpoint 已过，不回溯）
     )
-    assert len(published) == 1
-    event = published[0]
+    event = published[-1]
     assert event.kind is FeedKind.RECALL_DETAIL
     assert event.space_ref == space_ref
-    # 字段最小化：无 query 原文/内容摘要
-    assert set(event.payload) == {"space_ref", "node_keys", "theta", "query_class"}
+    # 字段最小化 + M12 增补键：无 query 原文/内容摘要
+    assert set(event.payload) == {
+        "event_id",
+        "space_ref",
+        "node_keys",
+        "theta",
+        "query_class",
+        "stage_ms",
+    }
     assert event.payload["query_class"] == "vector"
 
     stack.registry.revoke(space_ref)
-    api_service._emit_recall_detail(
-        ctx, space_id=space_id, result=result, query_text=None, query_vector=[0.1]
+    _emit_recall_log(space_id, space_ref, ["ev_gate3"])
+    _wait_event_in_ops(stack.es_ops, space_id)
+    recall_filter.run_once(
+        stack.es_ops,
+        registry=stack.registry,
+        publish=published.append,
+        state_path=state_path,
     )
-    assert len(published) == 1  # 撤回后再不发布
+    assert all(p.payload["node_keys"] != ["ev_gate3"] for p in published)  # 撤回后再不转发
 
 
 # ---------------------------------------------------------------- ① R1/R2
@@ -259,6 +322,7 @@ def test_r3_correlation_and_miss(stack):
             source=FeedSource.FF_METRIC,
             space_ref=space_ref,
             payload={
+                "event_id": uuid.uuid4().hex,
                 "space_ref": space_ref,
                 "node_keys": [recalled_key],
                 "theta": {},
@@ -292,6 +356,7 @@ def test_worker_drops_unauthorized_feed(stack):
             source=FeedSource.FF_METRIC,
             space_ref=space_ref,
             payload={
+                "event_id": uuid.uuid4().hex,
                 "space_ref": space_ref,
                 "node_keys": ["ev_x"],
                 "theta": {},

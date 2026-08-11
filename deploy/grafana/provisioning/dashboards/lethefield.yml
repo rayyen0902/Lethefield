@@ -1,0 +1,15 @@
+# M12 可观测性（开发期最小集）：Grafana dashboard provider。
+# 从本目录（provisioning 挂载内）加载 *.json dashboard。
+
+apiVersion: 1
+
+providers:
+  - name: lethefield
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

@@ -1,0 +1,32 @@
+# M12 可观测性（开发期最小集）：Prometheus scrape 配置。
+# 注意：被监控进程不在 compose 里，是宿主机 `uv run` 起的 Python 进程，
+# 因此所有 target 走 host.docker.internal（colima 支持从容器解析到宿主机）。
+
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  # services/api FastAPI 进程（uv run，prometheus_client 挂在 /metrics，端口 8000）
+  - job_name: lethefield-api
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+
+  # services/fs sweep worker 进程（prometheus_client start_http_server，端口 9101）
+  - job_name: lethefield-fs
+    static_configs:
+      - targets: ["host.docker.internal:9101"]
+
+  # services/training 加工 worker 进程（prometheus_client start_http_server，端口 9102）
+  - job_name: lethefield-training
+    static_configs:
+      - targets: ["host.docker.internal:9102"]
+
+  # ops/ingest_dms 巡检进程（prometheus_client start_http_server，端口 9103）
+  - job_name: lethefield-ingest-dms
+    static_configs:
+      - targets: ["host.docker.internal:9103"]
+
+  # 指标导出器进程（prometheus_client start_http_server，端口 9104）
+  - job_name: lethefield-metrics-exporter
+    static_configs:
+      - targets: ["host.docker.internal:9104"]

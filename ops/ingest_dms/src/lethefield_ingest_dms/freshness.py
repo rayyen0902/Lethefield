@@ -16,8 +16,27 @@ import redis as redis_lib
 from lethefield_clients.control_plane import ControlPlaneStore, Tier
 from lethefield_clients.ex_n import last_write_at
 from lethefield_logschema import LogEvent
+from lethefield_metrics import gauge as _metric_gauge
+from prometheus_client import REGISTRY as _DEFAULT_REGISTRY
 
 SERVICE = "ingest-dms"
+
+# M12 定案：ex_last_write_age_seconds（原 n_now_lag_seconds 的修正口径）——
+# per-space 龄期聚合成 max/p95 两个 gauge（space_id 是标签黑名单，聚合守基数纪律）。
+# 与 DMS 新鲜度告警同源同事、各走各线：告警线管呼叫，指标线管趋势。
+_EX_LAST_WRITE_AGE = _metric_gauge(
+    "lethefield_ex_last_write_age_seconds",
+    "space 距最近一次成功 EX 写入的龄期聚合（dimension=max/p95）",
+    labels=["dimension"],
+    registry=_DEFAULT_REGISTRY,
+)
+
+
+def _p95(values: list[float]) -> float:
+    """简易 p95（单调上报口径，样本少时不外推）。"""
+    ordered = sorted(values)
+    return ordered[max(0, int(len(ordered) * 0.95 + 0.999) - 1)]
+
 
 # 高保障 tier：从未写入也算活跃且立即 stale（-hot/premium 的沉默本身就是异常）
 HOT_TIERS = frozenset({Tier.HOT, Tier.PREMIUM})
@@ -36,10 +55,13 @@ def check_freshness(
 ) -> list[LogEvent]:
     """活跃集合内 stale 判定 + 翻转边告警。返回本轮产生的告警/恢复事件。"""
     alerts: list[LogEvent] = []
+    ages: list[float] = []
     for space_id in store.list_spaces():
         mapping = store.get_space_mapping(space_id)
         last_write = last_write_at(redis, space_id)
         age_seconds = (now - last_write).total_seconds() if last_write is not None else None
+        if age_seconds is not None:
+            ages.append(age_seconds)
         state_key = STALE_KEY_PREFIX + space_id
 
         # 活跃集合：W 窗口内有写入的 space，或 hot/premium tier 全集；
@@ -86,4 +108,7 @@ def check_freshness(
                     },
                 )
             )
+    if ages:  # M12：龄期聚合 gauge（无可算龄期的 space 时保持上轮值）
+        _EX_LAST_WRITE_AGE.labels(dimension="max").set(max(ages))
+        _EX_LAST_WRITE_AGE.labels(dimension="p95").set(_p95(ages))
     return alerts

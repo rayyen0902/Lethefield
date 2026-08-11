@@ -12,7 +12,6 @@
 5. 清映射 + 全链路校验无残留。
 """
 
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -26,7 +25,7 @@ from lethefield_clients import (
     keyspace_name,
     validate_space_id,
 )
-from lethefield_logschema import LogEvent
+from lethefield_logschema import LogEvent, emit
 from lethefield_rms.vectors import VECTORS_INDEX
 from pulsar import Client as PulsarClient
 
@@ -34,8 +33,6 @@ from lethefield_scheduler import pulsar_admin
 from lethefield_scheduler.config import DDL_TIMEOUT_SECONDS as _DDL_TIMEOUT_SECONDS
 from lethefield_scheduler.config import DEFAULT_CONFIG, SchedulerConfig
 from lethefield_scheduler.destroy_broadcast import BroadcastError, make_broadcast
-
-logger = logging.getLogger(__name__)
 
 
 class DestroyError(RuntimeError):
@@ -116,13 +113,14 @@ def destroy_space(
     try:
         broadcast(space_id)
     except Exception:
-        logger.error(
+        emit(
             LogEvent(
                 service="lethefield-scheduler",
                 event_type="destroy_broadcast_failed",
                 space_id=space_id,
                 payload={"consequence": "注销中止于第 4 步，映射保留 destroying，可重试"},
-            ).to_jsonl()
+            ),
+            sync=True,  # 一次性 CLI：同步直写防退出丢失
         )
         raise
 

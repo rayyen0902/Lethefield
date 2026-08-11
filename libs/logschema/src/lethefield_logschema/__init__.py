@@ -8,6 +8,7 @@
 它只被禁止作为聚合指标标签（见 lethefield-metrics 的标签黑名单）。
 """
 
+from lethefield_logschema.es_sink import EsLogShipper, configure, emit
 from lethefield_logschema.events import LogEvent
 
-__all__ = ["LogEvent"]
+__all__ = ["EsLogShipper", "LogEvent", "configure", "emit"]

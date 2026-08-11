@@ -6,11 +6,13 @@ requires-python = ">=3.12"
 dependencies = [
     "lethefield-clients",
     "lethefield-metrics",
+    "lethefield-logschema",
 ]
 
 [tool.uv.sources]
 lethefield-clients = { workspace = true }
 lethefield-metrics = { workspace = true }
+lethefield-logschema = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

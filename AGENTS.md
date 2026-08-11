@@ -2,13 +2,12 @@
 
 ## 项目阶段
 
-M0–M11（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
+M0–M12（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
 FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租户调度器 /
-EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线）已完成并验证
-（M0–M11 CI 全绿）。
-**下一个模块：M12 可观测性埋点（开发期最小集）**（开发文档 §13：§19.3 系统指标 +
-标定线最小集 + 日志事件 schema 落管线；M11 召回明细的进程内授权闸门是过渡形态，
-日志管线上线后过滤器改读管线）。
+EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线 / 可观测性埋点）已完成并验证
+（M0–M12 CI 全绿）。
+**下一个模块：M13 多租户工程红线落地**（开发文档 §14：六条红线转可自动化检查——
+静态扫描拦截无 space 过滤的批量查询、单 space 配额强制、冷热分层对比、红线 4/5/6 汇总核验）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -119,8 +118,8 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   R1 = outcome≠accepted、R2 = escalation_type 非空，命中才发布——常规流量不进管线）。
   ③ 入料口：API retrieve 发射最小化召回明细（space_ref + node_key 列表 + θ 阶段计数 +
   query 类别，**无 query 原文**），LogEvent 进运维日志 + CALIBRATION 授权闸门后入 feed
-  topic（进程内闸门是 M12 日志管线上线前的过渡形态）；`RetrievalResult.stats`
-  （anchors/pool/returned）是 θ 统计数据源。④ 入料口 `ex_feed`：只读 EX 派生纠错对
+  topic（进程内闸门已在 M12 收口删除——定案形态 = recall_filter 读 es-ops 管线，见下）；
+  `RetrievalResult.stats`（anchors/pool/returned）是 θ 统计数据源。④ 入料口 `ex_feed`：只读 EX 派生纠错对
   （旧内容按 `ref_conflict` 去 `ev_` 前缀反查 EX 事件，不触 RMS），CONTENT_COPY 闸门
   入 topic 前拒发，state 文件幂等。worker 双订阅轮询（feed `training-sample-worker` +
   control `training-destroy-sink`），worker 侧授权复查为第二道防线；热层 =
@@ -134,6 +133,29 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
 - Pulsar Exclusive 订阅在前一 consumer 关闭后短暂窗口内报 ConsumerBusy（broker 连接回收
   滞后）——快速重订阅要退避重试（worker `_subscribe_with_retry`），常驻形态订阅常开
   不按轮重建（M11 集成测试实测）。
+- M12 定案：日志管线单点 `libs/logschema/es_sink.py`（`emit(event, sync=)`：stderr 恒留底 +
+  configure 后异步批量进 es-ops `lethefield-logs-YYYY.MM.DD`；一次性 CLI 用 sync=True 惰性
+  建 shipper 直写；ES 不可达 fail-open）。暴露口：API 自身端口 `/metrics`（不挂业务 scope，
+  1.0 内网口径）；worker 进程 `lethefield_metrics.start_metrics_server`（端口约定 fs 9101 /
+  training 9102 / ingest_dms 9103 / exporter 9104，env `LETHEFIELD_METRICS_PORT`，0=不起，
+  --once 不起）。离线聚合 = `ops/metrics_exporter`（只读 es-ops 日志流 + system.size_estimates
+  + 映射表 + rms_vectors _stats/_count 元数据——红线 1 边界）：留痕线/δ counter 与
+  graph_open histogram 从日志流折叠（游标进程内、重启全量重建）；**δ/留痕计数统一走
+  日志流聚合通道**（一次性 CLI 进程内 counter 不可 scrape）。`graph_open_duration_seconds`
+  = 显式 open 点客户端近似（cold/warm 按图名存在性）；`graph_lru_cache_hit_ratio` =
+  离线代理（闲置后首请求且 Stage 高耗时占比，阈值 env 占位待标定）；`n_now_lag_seconds`
+  改名 `ex_last_write_age_seconds`（DMS 顺带发 max/p95 gauge，{dimension} 标签）；
+  `cell_watermark` 实现名 `lethefield_cell_watermark_ratio`（命名规则强制单位后缀）。
+  ③ 收口定案形态：`lethefield_training.recall_filter` 轮询 es-ops → CALIBRATION 闸门 →
+  feeds/raw（at-least-once + checkpoint state 文件）；召回明细带 event_id + stage_ms，
+  worker `RecallWindow.mark_seen` 按 ID 去重（缺 event_id fail-closed）；API 训练 topic
+  发布代码已整体删除。compose 新增 prometheus(9090)/grafana(3000)（scrape 走
+  host.docker.internal——服务在宿主机 uv run；Grafana provisioning datasource + 三线六面板）。
+- ES 排序不能用 `_id`（fielddata 限制，报 search_phase_execution_exception）——日志游标
+  按 timestamp 单字段排序，同毫秒边界重读由 event_id 去重兜底（M12 实测）。
+- 拉新镜像注意：colima VM 的 dockerd 代理指向宿主机 192.168.5.2:7897，若宿主机代理只监听
+  127.0.0.1 会 TLS 超时——宿主机代理开 Allow LAN，或宿主机侧 crane 拉取后 docker load
+  （M12 prometheus/grafana 镜像实测踩坑）。
 - pulsar-client 的 `receive` 参数名是 `timeout_millis`（写错被宽泛 except 吞成假阴性——
   consumer 循环只捕 `pulsar.Timeout`）；Pulsar 412：backlog quota 必须 < retention size。
 - **gremlin_python 客户端基于 tornado 单连接，跨线程共享同一 Client 会死锁**——
@@ -176,6 +198,9 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
 | `uv run python -m lethefield_training submit-incident --problem P --diagnosis D --decision C --outcome O` | M11：② 入料口（故障/混沌案例提交，rule=R5） |
 | `uv run python -m lethefield_training ex-feed --space S` | M11：④ 入料口（EX 只读派生纠错对，CONTENT_COPY 闸门，幂等） |
 | `uv run python -m lethefield_decision_log submit ... [--feed]` | M11：决策留痕提交（三列已补；--feed 时 R1/R2 命中发布训练 feed） |
+| `uv run python -m lethefield_training recall-filter [--once]` | M12：③ 过滤器（es-ops 召回明细 → 授权闸门 → 训练 topic，checkpoint） |
+| `uv run python -m lethefield_metrics_exporter [--once]` | M12：离线聚合 worker（日志流/元数据 → 指标，:9104 暴露口） |
+| `open http://localhost:9090` / `:3000`（admin/admin） | M12：Prometheus / Grafana（compose 常驻，dashboard 已 provision） |
 | `docker compose --profile cell2 up -d` 后 `uv run pytest tests/integration/test_m10_migration_drill.py` | M10：跨 Cell 迁移演练（按需，不占常驻内存；默认 CI 自动 skip） |
 
 ## 约定

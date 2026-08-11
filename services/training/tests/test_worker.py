@@ -47,7 +47,12 @@ def test_recall_detail_authorized_records_window_no_sample(tmp_path):
             FeedKind.RECALL_DETAIL,
             FeedSource.FF_METRIC,
             "ref_a",
-            {"node_keys": ["ev_1"], "theta": {"anchors": 1}, "query_class": "vector"},
+            {
+                "event_id": "evt-1",
+                "node_keys": ["ev_1"],
+                "theta": {"anchors": 1},
+                "query_class": "vector",
+            },
         ),
         deps,
     )
@@ -58,7 +63,12 @@ def test_recall_detail_authorized_records_window_no_sample(tmp_path):
 def test_recall_detail_unauthorized_dropped(tmp_path):
     deps, emitted = _deps(tmp_path, authorized=False)
     worker.process_feed_event(
-        _feed(FeedKind.RECALL_DETAIL, FeedSource.FF_METRIC, "ref_a", {"node_keys": ["ev_1"]}),
+        _feed(
+            FeedKind.RECALL_DETAIL,
+            FeedSource.FF_METRIC,
+            "ref_a",
+            {"event_id": "evt-unauth", "node_keys": ["ev_1"]},
+        ),
         deps,
     )
     assert deps.window.recalled_at("ref_a", "ev_1") is None  # 第二道防线：未授权丢弃
@@ -87,7 +97,12 @@ def _correction(space_ref="ref_a", old="ev_1"):
 def test_r3_hit_produces_sample(tmp_path):
     deps, _ = _deps(tmp_path)
     worker.process_feed_event(
-        _feed(FeedKind.RECALL_DETAIL, FeedSource.FF_METRIC, "ref_a", {"node_keys": ["ev_1"]}),
+        _feed(
+            FeedKind.RECALL_DETAIL,
+            FeedSource.FF_METRIC,
+            "ref_a",
+            {"event_id": "evt-unauth", "node_keys": ["ev_1"]},
+        ),
         deps,
     )
     worker.process_feed_event(_correction(), deps)
@@ -111,7 +126,12 @@ def test_r3_miss_without_recall(tmp_path):
 def test_r3_miss_across_space(tmp_path):
     deps, _ = _deps(tmp_path)
     worker.process_feed_event(
-        _feed(FeedKind.RECALL_DETAIL, FeedSource.FF_METRIC, "ref_b", {"node_keys": ["ev_1"]}),
+        _feed(
+            FeedKind.RECALL_DETAIL,
+            FeedSource.FF_METRIC,
+            "ref_b",
+            {"event_id": "evt-b", "node_keys": ["ev_1"]},
+        ),
         deps,
     )
     worker.process_feed_event(_correction(space_ref="ref_a"), deps)
@@ -225,3 +245,33 @@ def test_destroy_scrubs_deletes_registry_and_logs(tmp_path):
     assert event.payload["scrubbed_count"] == 1
     assert event.payload["registry_entry_deleted"] is True
     assert event.payload["ticket_ref"] == "t-1"
+
+
+# ---------------------------------------------------------------- M12：event_id 去重
+
+
+def test_recall_detail_missing_event_id_fail_closed(tmp_path):
+    import pytest
+
+    deps, _ = _deps(tmp_path)
+    with pytest.raises(ValueError, match="event_id"):
+        worker.process_feed_event(
+            _feed(FeedKind.RECALL_DETAIL, FeedSource.FF_METRIC, "ref_a", {"node_keys": ["ev_1"]}),
+            deps,
+        )
+
+
+def test_recall_detail_duplicate_event_id_deduped(tmp_path):
+    deps, _ = _deps(tmp_path)
+    event = _feed(
+        FeedKind.RECALL_DETAIL,
+        FeedSource.FF_METRIC,
+        "ref_a",
+        {"event_id": "evt-dup", "node_keys": ["ev_1"]},
+    )
+    worker.process_feed_event(event, deps)
+    first_seen = deps.window.recalled_at("ref_a", "ev_1")
+    assert first_seen is not None
+    # at-least-once 重放：同 event_id 不重复登记（窗口时间戳不被刷新）
+    worker.process_feed_event(event, deps)
+    assert deps.window.recalled_at("ref_a", "ev_1") == first_seen

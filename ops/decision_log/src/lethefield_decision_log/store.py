@@ -10,7 +10,6 @@ M11 入料口 ①：提交路径按 decision_rules 判定 R1（outcome≠accepte
 元数据、无用户内容，不过授权注册表闸门（闸门只管 ③④ 类，既定边界）。
 """
 
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -24,7 +23,7 @@ from lethefield_clients import (
     decision_rules,
     pg_connection,
 )
-from lethefield_logschema import LogEvent
+from lethefield_logschema import LogEvent, emit
 
 
 @dataclass(frozen=True)
@@ -94,6 +93,21 @@ class DecisionLogStore:
                 ),
             )
             record_id = cur.fetchone()[0]
+        # M12 留痕线：决策留痕明细事件（agent_suggestion_total / escalation_total
+        # 离线聚合数据源；不含标题/内容——内容出边界守 §12.3）。CLI 短命进程同步直写。
+        emit(
+            LogEvent(
+                service="decision-log",
+                event_type="decision_recorded",
+                payload={
+                    "record_id": record_id,
+                    "outcome": outcome,
+                    "escalation_type": escalation_type,
+                    "has_agent_suggestion": bool(agent_suggestion),
+                },
+            ),
+            sync=True,
+        )
         self._feed(
             record_id,
             title,
@@ -141,13 +155,13 @@ class DecisionLogStore:
         try:
             self._publish(event)
         except Exception as e:  # best-effort：留痕提交已成功，feed 失败只告警留痕
-            print(
+            emit(
                 LogEvent(
                     service="decision-log",
                     event_type="decision_feed_failed",
                     payload={"record_id": record_id, "error": str(e)},
-                ).to_jsonl(),
-                file=sys.stderr,
+                ),
+                sync=True,
             )
 
     def get(self, record_id: int) -> DecisionRecord | None:

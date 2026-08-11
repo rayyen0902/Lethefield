@@ -13,6 +13,7 @@
 空洞不破坏单调性，可接受）；n_now 重建与并发 INCR 的竞态。
 """
 
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -26,6 +27,15 @@ from lethefield_clients.ex_n import (
     n_key,
     n_now,
     touch_last_write,
+)
+from lethefield_metrics import histogram
+from prometheus_client import REGISTRY
+
+# M12 埋点：EX 写路径耗时（source of truth 写入，§19.3 告警线）
+_EX_WRITE_DURATION = histogram(
+    "lethefield_ex_write_duration_seconds",
+    "EX 经验事件落表耗时（不含 n 分配）",
+    registry=REGISTRY,
 )
 
 __all__ = [
@@ -59,12 +69,14 @@ def append_experience(
     ks = keyspace_name(space_id)
     n: int = redis.incr(n_key(space_id))  # 经验事件才推进 n（原子分配）
     event_id = uuid.uuid4()
+    t0 = time.perf_counter()
     session.execute(
         f"INSERT INTO {ks}.{EXPERIENCE_TABLE} "
         "(n, event_id, content, agent_actor_id, account_id, tau_ms, ref_conflict, created_at) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         (n, event_id, content, agent_actor_id, account_id, tau_ms, ref_conflict, datetime.now(UTC)),
     )
+    _EX_WRITE_DURATION.observe(time.perf_counter() - t0)  # M12：EX 写路径耗时
     touch_last_write(redis, space_id, now=datetime.now(UTC))  # M10 DMS：成功摄入才刷新
     return str(event_id), n
 

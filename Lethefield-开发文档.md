@@ -18,6 +18,9 @@
 9. Dead Man's Switch 落地形态升级确认定案：双路分离——集群级 probe topic 探针（page 级，禁止向 space namespace 发探针污染数据面）+ space 写入新鲜度（observation 级；「活跃」= 过去 W 窗口有摄入或 hot/premium tier；W 与超窗阈值待标定）（详见 M10、§20）。
 10. R3 检测机制升级确认定案：关联式实现——retrieve 发射最小化召回明细日志事件（`space_ref` 哈希 + `node_key` 列表 + θ 统计，不含原文），授权拦截后过境训练 topic，worker 按 `node_key` + `W_r3` 时间窗与 ④ 路纠错对关联，命中才产样本；未经召回的纠错不计入 R3；否决"纠错即样本"简化（污染标定闭环）（详见 M11）。
 11. 决策留痕表结构补齐（§11.3 既定要求）：新增 `agent_suggestion` / `outcome`（`accepted|modified|rejected`）/ `escalation_type`（可空）三字段；R1/R2 在提交路径判定喂训练 topic ① 口；否决"只进训练样本、不动表"（留痕库审计面缺位）（详见 M0 任务 5）。
+12. 图指标观测口径升级确认定案：`graph_open_duration` 走客户端近似（显式 open 点埋点，服务漂移告警）；`graph_lru_cache_hit_ratio` 改离线推导代理口径（闲置后首请求 + Stage 耗时异常占比，复用召回明细日志事件，零新增埋点）；否决 JMX sidecar（未验证 + 过重）与"登记缺口延后"（标定消费方断粮）（详见 M12 系统指标表）。
+13. `n_now_lag_seconds` 口径升级确认定案：原"缓存滞后"语义已被写穿实现消灭；改名 `ex_last_write_age_seconds`（space 距最近成功写入时长，数据源 `ex:last_write:{space}`），DMS 巡检进程发射聚合 max/p95 gauge（禁 space_id 标签）；否决"缓存 vs EX 差值"（测量不存在的失败模式）与静默延后（详见 M12 系统指标表）。
+14. M11 ③ 入料口收口时机定案：M12 内一次收口为定案形态（过滤器读日志管线），API 进程内闸门与训练 topic 发布代码整体删除，新增 M12 验收项锁定（详见 M12 验收标准）；否决"只建管线、闸门存续"（双写路径延寿）。
 
 **v1.1 修订记录**（相对 v1.0，评审发现的问题修复）：
 1. 新增模块 M0（工程地基）、M14（SS 显著性打分服务）、M15（写入链 worker）、M16（IS 简版）——v1.0 中 SS、写入链、IS 三处只有零散要求、无责任模块，属遗漏。
@@ -649,13 +652,13 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 
 | 指标 | 说明 |
 |---|---|
-| `graph_open_duration_seconds{type=cold/warm}` | 基线：cold p50≈3.6s / warm≈0.48s，用于漂移告警 |
-| `graph_lru_cache_hit_ratio` | LRU 缓存与预热标定 |
+| `graph_open_duration_seconds{type=cold/warm}` | 基线：cold p50≈3.6s / warm≈0.48s，用于漂移告警。**口径（v1.2 定案）**：客户端近似——在显式 open 点（provision 预热 / migrate / rebuild / schema 初始化）埋 histogram，cold/warm 按图名是否已存在推断；运行期逐 traversal 的服务端隐式 open 不进统计（开发期近似口径，诚实标注） |
+| `graph_lru_cache_hit_ratio` | LRU 缓存与预热标定。**口径（v1.2 定案）**：离线推导代理指标，非服务端真实命中率——从 space 粒度检索延迟日志事件（召回明细，M12 已有）离线计算"闲置间隔后首请求且 Stage 耗时异常高"的请求占比，作为缓存失效频率代理，回答"缓存是否够大、预热是否有效"。**否决 JMX sidecar 方案**（JG 是否暴露图实例缓存指标未验证 + 新组件过重）；2.0 生产规模下缓存容量成为真实问题时再议服务端真实口径 |
 | `retrieve_stage_duration_seconds{stage=knn/subgraph/ff_filter}` | 检索各阶段耗时 |
 | `record_confirm_duration_seconds` | `memory.record` 确认延迟预算 |
 | `pulsar_backlog_events{namespace_class}` | **Dead Man's Switch 载体**，见 M10 |
 | `ex_write_duration_seconds` | EX 写路径耗时 |
-| `n_now_lag_seconds` | 事件序号滞后 |
+| `ex_last_write_age_seconds`（聚合：max / p95） | 原 `n_now_lag_seconds` 的口径修正（v1.2 定案）：原语义"缓存 n 滞后于 EX"已被实现消灭（摄入路径写穿维护、Redis n 即权威值），现口径 = **space 距最近成功写入的时长**（数据源 `ex:last_write:{space}`，M10 已落地）。由 DMS 巡检进程顺带发射聚合 gauge（max / p95，**禁 space_id 标签**）；与 DMS 新鲜度告警同源同事、各走各线（告警线管呼叫，指标线管趋势） |
 | `fs_sweep_lag_seconds` / `fs_sweep_processed_total` | FS sweep 健康度 |
 | `cell_watermark{cell_id,dimension}` | M9 水位直接输入 |
 | `space_storage_bytes{tier}` | 成本验证，需合并 EX 口径 |
@@ -675,14 +678,22 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 - 与训练管线边界：运维指标/日志与含用户内容的训练副本，**在埋点代码层面物理分开**（不是同一份日志两处消费）。
 
 ### 验收标准
-- [ ] 上述"1+2+3+4"四类指标/schema 全部实现且可在 Prometheus/Grafana 查询到。
-- [ ] 代码审查：任何聚合指标的标签中不出现 `space_id` 或 `node_key`。
-- [ ] 聚合指标计算路径不扫描存储（验证方式：聚合任务的数据源只能是日志管线，不能是 RMS/EX 直连查询）。
-- [ ] 埋点代码与训练管线数据源代码物理分属不同模块/文件，无共用埋点函数。
+- [x] 上述"1+2+3+4"四类指标/schema 全部实现且可在 Prometheus/Grafana 查询到。
+- [x] 代码审查：任何聚合指标的标签中不出现 `space_id` 或 `node_key`。
+- [x] 聚合指标计算路径不扫描存储（验证方式：聚合任务的数据源只能是日志管线，不能是 RMS/EX 直连查询）。
+- [x] 埋点代码与训练管线数据源代码物理分属不同模块/文件，无共用埋点函数。
+- [x] M11 ③ 入料口收口为定案形态（v1.2 定案）：API retrieve 只发 LogEvent 进运维日志 ES；过滤器轮询日志管线 → 查授权注册表 → 转发训练 topic（at-least-once + checkpoint，召回明细事件带唯一 ID、worker 侧按 ID 去重）；**API 进程内授权闸门与训练 topic 发布代码整体删除**（不是注释掉），M11 相关集成测试改为定案形态。
 
 ### 明确不做
 - 不在开发期实现"可延后"清单中的离线 gauge（留到种子期前）。
 - 不做 Prometheus HA（2.0 再议）。
+
+### 实现定案（v1.2，随代码落地入档）
+- **暴露口**：API 走自身应用端口 `/metrics`（运维通道不挂业务 scope，1.0 内网暴露口径）；常驻 worker（fs 9101 / training 9102 / ingest_dms 9103 / metrics_exporter 9104）经 `lethefield_metrics.start_metrics_server`（prometheus_client 薄封装，env `LETHEFIELD_METRICS_PORT` 可覆盖，0 = 不起；--once 短命形态不起）。
+- **日志管线**：`libs/logschema/es_sink.py` 是唯一写入端——`emit(event, sync=)` stderr 恒留底 + 已 configure 进程异步批量 bulk 进 es-ops（index `lethefield-logs-YYYY.MM.DD`，动态 mapping 开发期够用）；一次性 CLI 用 `sync=True`（惰性建 shipper 同步直写防退出丢尾部）；ES 不可达 fail-open 不阻塞业务。既有 13 处 print 发射点全部收编。
+- **离线聚合** = `ops/metrics_exporter`（循环 + --once + :9104）：留痕线/δ counter 与 graph_open histogram 从 es-ops 日志流折叠（游标只在进程内，重启全量重建——开发期日志量有界）；`ff_recalled_then_touched_rate` / `graph_lru_cache_hit_ratio`（代理口径）按窗全量重算；`cell_watermark_ratio`（命名规则强制 _ratio 后缀）读映射表；`space_storage_bytes{tier}` = Cassandra `system.size_estimates`（cell+EX 两集群）+ rms_vectors 总字节按 `/_count?routing=` 文档数比例分摊（共享索引无 per-space 字节的近似口径）。**δ/留痕计数统一走日志流聚合通道**——一次性 CLI（corrections 等）的进程内 counter 不可 scrape，这是它们的指标到达 Prometheus 的唯一通路。
+- **③ 收口**：`lethefield_training.recall_filter`（recall-filter 子命令）轮询 es-ops → CALIBRATION 闸门 → 转发 feeds/raw；召回明细带 event_id（API 侧 uuid4）+ stage_ms；worker `RecallWindow.mark_seen` 按 ID 去重（缺 event_id fail-closed）。
+- **Prometheus + Grafana** 进 compose（9090/3000；scrape 走 host.docker.internal——服务进程在宿主机 uv run 形态；Grafana provisioning datasource + 三线六面板 dashboard）。
 
 ---
 

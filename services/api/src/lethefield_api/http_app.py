@@ -7,8 +7,9 @@
 
 from typing import Annotated, Protocol
 
-from fastapi import Body, FastAPI, Request
+from fastapi import Body, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 
 from lethefield_api import service
 from lethefield_api.auth import Claims, reject_actor_spoof, verify_token
@@ -103,5 +104,11 @@ def create_app(ctx: ApiContext, rate_limiter: RateLimiter | None = None) -> Fast
             rho=body.get("rho", 1.0),
             trace_history=body.get("trace_history", False),
         )
+
+    @app.get("/metrics")
+    def metrics_ep() -> Response:
+        """Prometheus 暴露口（M12）。运维通道：不挂 _claims/_guard，不进业务凭证
+        体系——1.0 单节点内网/localhost 暴露口径（2.0 服务商场景再议鉴权）。"""
+        return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
     return app

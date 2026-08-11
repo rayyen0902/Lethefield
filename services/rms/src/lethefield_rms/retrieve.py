@@ -29,12 +29,15 @@ LONG_MAX，粗筛天然放行。
 """
 
 import math
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from elasticsearch import Elasticsearch
 from gremlin_python.driver.client import Client
+from lethefield_metrics import histogram
+from prometheus_client import REGISTRY
 
 from lethefield_rms import ff
 from lethefield_rms.vectors import keyword_search, knn_search
@@ -125,11 +128,14 @@ class RetrievalResult:
 
     stats：各阶段计数明细（anchors/pool/returned），M11 召回明细事件（③ 入料口）
     的 θ 统计数据源；仅主入口填充，不改变四阶段签名与过滤逻辑。
+    timings：各阶段耗时秒数（knn/subgraph/ff_filter），M12 召回明细事件的
+    Stage 耗时数据源（③ 收口后供 lru 缓存失效代理指标离线推导）。
     """
 
     nodes: list[NodeItem]
     edges: list[EdgeRecord]
     stats: dict[str, int] = field(default_factory=dict)
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -603,6 +609,21 @@ def _stage4_budget(candidates: list[ScoredNode], *, config: RetrieveConfig) -> l
 
 # ---------------------------------------------------------------- 主入口
 
+# M12 埋点（§19.3 系统指标 + §19.6 FF 骨架）：stage 分段耗时与 θ 过滤比。
+# 注册全局 REGISTRY——指标注册在 import 时完成，但只有带 /metrics 暴露口的进程
+# 被 scrape；无暴露口的进程（测试/一次性脚本）只是进程内计数，无副作用。
+_RETRIEVE_STAGE_DURATION = histogram(
+    "lethefield_retrieve_stage_duration_seconds",
+    "检索各阶段耗时（stage=knn/subgraph/ff_filter）",
+    ["stage"],
+    registry=REGISTRY,
+)
+_FF_THETA_FILTER_RATIO = histogram(
+    "lethefield_ff_theta_filter_ratio",
+    "单次 retrieve 子图被 θ 过滤比例（含第二次过滤与预算裁剪，pool=0 不计）",
+    registry=REGISTRY,
+)
+
 
 def retrieve(
     client: Client,
@@ -630,7 +651,8 @@ def retrieve(
 
     theta = ff.theta_effective(theta_base, rho)  # ρ 的唯一入口：两处硬过滤阈值
 
-    # Stage 2：锚点识别（ES）+ 第一次独立硬过滤
+    # Stage 2：锚点识别（ES）+ 第一次独立硬过滤（§19.3 计时标签 knn）
+    t0 = time.perf_counter()
     anchors = _stage2_anchors(
         client,
         es,
@@ -643,10 +665,17 @@ def retrieve(
         config=config,
         ff_config=ff_config,
     )
+    t1 = time.perf_counter()
     if not anchors:
-        return RetrievalResult(nodes=[], edges=[], stats={"anchors": 0, "pool": 0, "returned": 0})
+        _RETRIEVE_STAGE_DURATION.labels(stage="knn").observe(t1 - t0)
+        return RetrievalResult(
+            nodes=[],
+            edges=[],
+            stats={"anchors": 0, "pool": 0, "returned": 0},
+            timings={"knn": t1 - t0},
+        )
 
-    # Stage 3：自适应遍历（JanusGraph；签名无 es、无 rho）
+    # Stage 3：自适应遍历（JanusGraph；签名无 es、无 rho；计时标签 subgraph）
     pool, edges = _stage3_traverse(
         client,
         gname,
@@ -657,8 +686,10 @@ def retrieve(
         config=config,
         ff_config=ff_config,
     )
+    t2 = time.perf_counter()
 
-    # Stage 3 收敛后：第二次独立硬过滤（与 Stage 2 不合并；固化节点跳过丢弃判定）
+    # Stage 3 收敛后：第二次独立硬过滤（与 Stage 2 不合并；固化节点跳过丢弃判定；
+    # 计时标签 ff_filter）
     final = {
         key: node
         for key, node in pool.items()
@@ -668,11 +699,19 @@ def retrieve(
         (e for e in edges if e.out_key in final and e.in_key in final),
         key=lambda e: (e.out_key, e.in_key, e.label),
     )
+    t3 = time.perf_counter()
 
     # Stage 4：token 预算
     nodes = _stage4_budget(list(final.values()), config=config)
+
+    timings = {"knn": t1 - t0, "subgraph": t2 - t1, "ff_filter": t3 - t2}
+    for stage, seconds in timings.items():
+        _RETRIEVE_STAGE_DURATION.labels(stage=stage).observe(seconds)
+    if pool:  # θ 过滤比（§19.6 FF 骨架）：pool → 最终返回的落差
+        _FF_THETA_FILTER_RATIO.observe(1.0 - len(nodes) / len(pool))
     return RetrievalResult(
         nodes=nodes,
         edges=final_edges,
         stats={"anchors": len(anchors), "pool": len(pool), "returned": len(nodes)},
+        timings=timings,
     )

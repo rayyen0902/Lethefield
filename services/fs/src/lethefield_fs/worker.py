@@ -24,14 +24,20 @@ from lethefield_clients import (
     n_now,
     redis_client,
 )
+from lethefield_logschema import LogEvent
+from lethefield_logschema import emit as emit_event
 from lethefield_metrics import counter as _metric_counter
 from lethefield_metrics import gauge as _metric_gauge
+from lethefield_metrics import metrics_port_from_env, start_metrics_server
 from lethefield_rms import ff
 from prometheus_client import REGISTRY as _DEFAULT_REGISTRY
 from redis import Redis
 
 from lethefield_fs.config import DEFAULT_SWEEP_CONFIG, HEARTBEAT_KEY, SweepConfig
 from lethefield_fs.sweep import SweepStats, sweep_space
+
+# fs sweep 进程 /metrics 暴露口默认端口（M12 端口约定，env LETHEFIELD_METRICS_PORT 可覆盖）
+DEFAULT_METRICS_PORT = 9101
 
 # §19.3 告警线指标；注册进 prometheus 默认 registry（服务暴露口 M12 统一接线）
 _SWEEP_PROCESSED = _metric_counter(
@@ -80,6 +86,16 @@ def run_once(
         redis.set(f"{HEARTBEAT_KEY}:{space}", time.time())
         results[space] = stats
     redis.set(HEARTBEAT_KEY, time.time())
+    # M12：δ 明细事件（ff_delta_applied_total 离线聚合数据源；count=0 不发控噪声）
+    total_neglected = sum(s.neglected for s in results.values())
+    if total_neglected:
+        emit_event(
+            LogEvent(
+                service="lethefield-fs",
+                event_type="ff_delta_applied",
+                payload={"type": "neglect", "count": total_neglected},
+            )
+        )
     return results
 
 
@@ -107,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
     redis = redis_client()
     store = MappingTableControlPlaneStore(cell_session)
     store.ensure_tables()
+    if not args.once:  # M12：常驻形态起 /metrics 暴露口（--once 短命进程不起）
+        start_metrics_server(metrics_port_from_env(DEFAULT_METRICS_PORT))
     try:
         while True:
             results = run_once(store, client, ex_session, cell_session, es, redis, config=config)

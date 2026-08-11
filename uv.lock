@@ -18,6 +18,7 @@ members = [
     "lethefield-ingest-dms",
     "lethefield-logschema",
     "lethefield-metrics",
+    "lethefield-metrics-exporter",
     "lethefield-rms",
     "lethefield-scheduler",
     "lethefield-training",
@@ -745,6 +746,7 @@ dev = [
     { name = "lethefield-ingest-dms" },
     { name = "lethefield-logschema" },
     { name = "lethefield-metrics" },
+    { name = "lethefield-metrics-exporter" },
     { name = "lethefield-rms" },
     { name = "lethefield-scheduler" },
     { name = "lethefield-training" },
@@ -767,6 +769,7 @@ dev = [
     { name = "lethefield-ingest-dms", editable = "ops/ingest_dms" },
     { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
+    { name = "lethefield-metrics-exporter", editable = "ops/metrics_exporter" },
     { name = "lethefield-rms", editable = "services/rms" },
     { name = "lethefield-scheduler", editable = "services/scheduler" },
     { name = "lethefield-training", editable = "services/training" },
@@ -890,6 +893,7 @@ version = "0.1.0"
 source = { editable = "services/fs" }
 dependencies = [
     { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
     { name = "lethefield-metrics" },
     { name = "lethefield-rms" },
 ]
@@ -897,6 +901,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
     { name = "lethefield-rms", editable = "services/rms" },
 ]
@@ -931,11 +936,15 @@ name = "lethefield-logschema"
 version = "0.1.0"
 source = { editable = "libs/logschema" }
 dependencies = [
+    { name = "elasticsearch" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.0" }]
+requires-dist = [
+    { name = "elasticsearch", specifier = ">=8.13,<9" },
+    { name = "pydantic", specifier = ">=2.0" },
+]
 
 [[package]]
 name = "lethefield-metrics"
@@ -949,17 +958,44 @@ dependencies = [
 requires-dist = [{ name = "prometheus-client", specifier = ">=0.20" }]
 
 [[package]]
+name = "lethefield-metrics-exporter"
+version = "0.1.0"
+source = { editable = "ops/metrics_exporter" }
+dependencies = [
+    { name = "cassandra-driver" },
+    { name = "elasticsearch" },
+    { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
+    { name = "lethefield-metrics" },
+    { name = "prometheus-client" },
+    { name = "redis" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cassandra-driver", specifier = ">=3.29" },
+    { name = "elasticsearch", specifier = ">=8.13,<9" },
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
+    { name = "lethefield-metrics", editable = "libs/metrics" },
+    { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "redis", specifier = ">=5.0" },
+]
+
+[[package]]
 name = "lethefield-rms"
 version = "0.1.0"
 source = { editable = "services/rms" }
 dependencies = [
     { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
     { name = "lethefield-metrics" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
 ]
 

@@ -16,6 +16,8 @@ from datetime import UTC, datetime
 from lethefield_clients import factories
 from lethefield_clients.control_plane import MappingTableControlPlaneStore
 from lethefield_logschema import LogEvent
+from lethefield_logschema import emit as emit_event
+from lethefield_metrics import metrics_port_from_env, start_metrics_server
 
 from lethefield_ingest_dms.backlog import check_backlog, fetch_training_backlog, report_backlog
 from lethefield_ingest_dms.config import DmsConfig
@@ -27,6 +29,9 @@ from lethefield_ingest_dms.probe import (
 )
 
 SERVICE = "ingest-dms"
+
+# ingest_dms /metrics 暴露口默认端口（M12 端口约定）
+DEFAULT_METRICS_PORT = 9103
 
 
 def _failure_event(event_type: str, error: Exception) -> LogEvent:
@@ -87,12 +92,14 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", help="单轮巡检（测试/巡检用）")
     args = parser.parse_args()
     config = DmsConfig.from_env()
+    if not args.once:  # M12：常驻形态起 /metrics 暴露口（backlog/龄期 gauge 被 scrape）
+        start_metrics_server(metrics_port_from_env(DEFAULT_METRICS_PORT))
 
     while True:
         alerts = run_once(config)
         for event in alerts:
             # 告警以结构化日志事件输出（告警通道选型属 M17 决策留痕项，此为事件源）
-            print(event.to_jsonl(), file=sys.stderr)
+            emit_event(event, sync=args.once)
         has_page = any(e.payload.get("level") == "page" for e in alerts)
         if args.once:
             if not alerts:

@@ -5,10 +5,12 @@ schema 常量在此单点定义，ensure_schema.groovy 脚本只含逻辑、元�
 """
 
 import argparse
+import time
 from importlib import resources
 
 from gremlin_python.driver.client import Client
 from lethefield_clients import gremlin_client
+from lethefield_logschema import LogEvent, emit
 
 # 顶点属性键 → JanusGraph 类型简单名（对齐开发文档 §3 节点表，共 17 个，M6 增 consolidated_at）
 EXPECTED_PROPERTY_KEYS: dict[str, str] = {
@@ -86,11 +88,27 @@ def ensure_schema_script() -> str:
     return resources.files("lethefield_rms").joinpath("ensure_schema.groovy").read_text()
 
 
+def _graph_exists(client: Client, gname: str) -> bool:
+    """图名是否已在 ConfiguredGraphFactory 注册（M12 graph_open cold/warm 推断依据）。
+
+    服务端返回值按元素逐个流回（不是嵌套列表——M0 起的环境事实）。
+    """
+    rows = client.submit("ConfiguredGraphFactory.getGraphNames()").all().result()
+    return gname in rows
+
+
 def ensure_graph_schema(
     client: Client, gname: str, backend_props: dict[str, str] | None = None
 ) -> None:
     """对图 gname 幂等落地全量 RMS schema（图不存在则按 backend_props 建图，
-    缺省 GRAPH_BACKEND_PROPS；M9 起调度器按 Cell endpoints 传入）。"""
+    缺省 GRAPH_BACKEND_PROPS；M9 起调度器按 Cell endpoints 传入）。
+
+    M12：显式 open 点计时——cold/warm 按图名是否已注册推断，发 graph_open_completed
+    明细事件（graph_open_duration_seconds 离线聚合的数据源；运行期逐 traversal 的
+    隐式 open 不进统计——开发期近似口径，§19.3 定案）。
+    """
+    existed = _graph_exists(client, gname)
+    t0 = time.perf_counter()
     result = (
         client.submit(
             ensure_schema_script(),
@@ -105,8 +123,21 @@ def ensure_graph_schema(
         .all()
         .result()
     )
+    duration = time.perf_counter() - t0
     if "ok" not in result:
         raise RuntimeError(f"图 {gname} schema 初始化未返回 ok：{result}")
+    emit(
+        LogEvent(
+            service="lethefield-rms",
+            event_type="graph_open_completed",
+            space_id=gname,
+            payload={
+                "open_type": "cold" if not existed else "warm",
+                "duration_seconds": round(duration, 6),
+            },
+        ),
+        sync=True,  # 调用方多为一次性 CLI（provision/migrate/rebuild），同步直写防丢
+    )
 
 
 def main() -> int:

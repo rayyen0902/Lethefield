@@ -5,12 +5,14 @@ description = "FS sweep worker：忽视惩罚 / n_star 顺带刷新 / 归档 / �
 requires-python = ">=3.12"
 dependencies = [
     "lethefield-clients",
+    "lethefield-logschema",
     "lethefield-metrics",
     "lethefield-rms",
 ]
 
 [tool.uv.sources]
 lethefield-clients = { workspace = true }
+lethefield-logschema = { workspace = true }
 lethefield-metrics = { workspace = true }
 lethefield-rms = { workspace = true }
 

@@ -1,0 +1,12 @@
+# M12 可观测性（开发期最小集）：Grafana datasource 自动 provisioning。
+# 指向同 compose 网络内的 prometheus 服务。
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

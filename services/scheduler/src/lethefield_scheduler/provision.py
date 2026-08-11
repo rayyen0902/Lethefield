@@ -10,6 +10,7 @@
 由运维按残留清单处理（开通失败的 space 未注册映射，不影响存量读写）。
 """
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -24,6 +25,7 @@ from lethefield_clients import (
     keyspace_name,
     validate_space_id,
 )
+from lethefield_logschema import LogEvent, emit
 from lethefield_rms.schema import backend_props_of, ensure_graph_schema
 
 from lethefield_scheduler import pulsar_admin
@@ -152,7 +154,21 @@ def provision_space(
 
     # hot/premium tier 预 open 图实例（§17.2：消化冷开 ~3.6s 延迟）
     if tier in (Tier.HOT, Tier.PREMIUM):
+        t0 = time.perf_counter()
         deps.gremlin.submit(
             "ConfiguredGraphFactory.open(gname); 'preopened'", {"gname": space_id}
         ).all().result()
+        # M12：显式 open 点计时（预热必为 warm——图刚经 ensure_graph_schema 建过）
+        emit(
+            LogEvent(
+                service="lethefield-scheduler",
+                event_type="graph_open_completed",
+                space_id=space_id,
+                payload={
+                    "open_type": "warm",
+                    "duration_seconds": round(time.perf_counter() - t0, 6),
+                },
+            ),
+            sync=True,
+        )
     return mapping
