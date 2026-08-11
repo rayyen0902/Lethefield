@@ -203,6 +203,10 @@ services:
     restart: unless-stopped
     ports:
       - "9090:9090"
+    # Linux（CI runner）默认不解析 host.docker.internal——显式映射宿主机网关；
+    # colima/Docker Desktop 原生支持，此行是无害重复
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus

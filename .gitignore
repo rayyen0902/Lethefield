@@ -14,3 +14,6 @@ __pycache__/
 
 # 部署数据卷（本地全栈运行数据，不入库）
 deploy/volumes/
+
+# Obsidian 工作区配置（本地编辑器状态，不入库）
+.obsidian/

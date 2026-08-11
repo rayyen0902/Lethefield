@@ -387,7 +387,28 @@ def test_recall_filter_chain(stack):
 
 
 def test_prometheus_scrapes_and_grafana_datasource(stack):
-    """验收硬指标：序列可在 Prometheus 查询（Grafana datasource 健康）。"""
+    """验收硬指标：序列可在 Prometheus 查询（Grafana datasource 健康）。自足用例。"""
+    from lethefield_decision_log import DecisionLogStore
+    from lethefield_metrics_exporter.exporter import ExporterDeps, run_once
+
+    # 自足造数：一条带 Agent 建议的决策 → es-ops → exporter 聚合出序列
+    DecisionLogStore().submit(
+        title=f"M12 Prom 探针 {uuid.uuid4().hex[:6]}",
+        decision="d",
+        decided_by="ci",
+        agent_suggestion="s",
+        outcome="modified",
+    )
+    _wait_es_ops(stack.es_ops, event_type="decision_recorded")
+    run_once(
+        ExporterDeps(
+            es_ops=stack.es_ops,
+            store=stack.store,
+            cell_session=stack.cell_session,
+            ex_session=stack.ex_session,
+            es_graph=stack.es_graph,
+        )
+    )
     start_metrics_server(9104)  # exporter 暴露口（本进程 REGISTRY 已含聚合序列）
     deadline = time.time() + 90  # scrape_interval 15s，留足两个周期余量
     found = False
