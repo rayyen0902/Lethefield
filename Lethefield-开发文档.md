@@ -21,13 +21,17 @@
 12. 图指标观测口径升级确认定案：`graph_open_duration` 走客户端近似（显式 open 点埋点，服务漂移告警）；`graph_lru_cache_hit_ratio` 改离线推导代理口径（闲置后首请求 + Stage 耗时异常占比，复用召回明细日志事件，零新增埋点）；否决 JMX sidecar（未验证 + 过重）与"登记缺口延后"（标定消费方断粮）（详见 M12 系统指标表）。
 13. `n_now_lag_seconds` 口径升级确认定案：原"缓存滞后"语义已被写穿实现消灭；改名 `ex_last_write_age_seconds`（space 距最近成功写入时长，数据源 `ex:last_write:{space}`），DMS 巡检进程发射聚合 max/p95 gauge（禁 space_id 标签）；否决"缓存 vs EX 差值"（测量不存在的失败模式）与静默延后（详见 M12 系统指标表）。
 14. M11 ③ 入料口收口时机定案：M12 内一次收口为定案形态（过滤器读日志管线），API 进程内闸门与训练 topic 发布代码整体删除，新增 M12 验收项锁定（详见 M12 验收标准）；否决"只建管线、闸门存续"（双写路径延寿）。
+15. 红线 3 Redis 逐出豁免 + n 权威值配套定案：现存 Redis 键均为小键、逐出无内存收益，`ex:n` 逐出会破坏 n 分配——豁免 Redis 逐出（不配 maxmemory-policy 逐出，防误伤权威键）；同时修正 M6 文档分叉——`ex:n` 定案为权威值（非缓存、无惰性重建），配套 AOF 持久化 + Redis n vs EX MAX(n) 一致性巡检（回退即告警）；否决惰性重建改造（动冻结写路径换零收益）与策略占位（无对象可逐出）（详见 M6、M13）。
+16. 索引形态一致性订正 + 归档向量处理定案：订正 v1.1 修订记录第 5 条（原表述丢失 mixed/vector 区分）——**每 space 独立 mixed index 可冻结；向量维持共享 `rms_vectors` + routing（有意架构选择：per-space 向量索引 = 索引数随 space 爆炸），非待议**；归档时同步删除 `rms_vectors` 对应文档、归档快照携带原始 `v_i`（embedding 不可重放）（详见修订记录第 5 条、M6 归档行）。
+17. 红线 2 配额落地形态定案：`QuotaConfig`（全局默认 + tier 可选覆盖）；写入侧硬校验落现有 writer/向量路径（不等 M15）、图 count 短 TTL 近似执行（超发有界）、查询侧补返回节点数硬上限；`QuotaExceeded` → API 映射既有 429（不新增契约码）；ES 存储字节走指标监控不做硬校验（详见 M13 红线 2 行）。
+18. 红线 1 常驻 worker 合规定义定案：经 ControlPlaneStore 枚举、逐 space 独立处理的常驻 worker 本身合规；豁免三要件（控制面枚举 / 逐 space 处理 / 批间节流）+ 机器可读登记（扫描器只认登记不认注释）；新增批处理入口 argparse 强制 `--space(s)`；否决"所有入口强制 --spaces"（废掉 fleet 级 worker 的天职）（详见 M13 红线 1 行）。
 
 **v1.1 修订记录**（相对 v1.0，评审发现的问题修复）：
 1. 新增模块 M0（工程地基）、M14（SS 显著性打分服务）、M15（写入链 worker）、M16（IS 简版）——v1.0 中 SS、写入链、IS 三处只有零散要求、无责任模块，属遗漏。
 2. M9 的开通/注销流程与 M10 矛盾（顺序不一致、注销缺训练管线广播），统一以 M10「三存储生命周期流水线」为最终版，M9 只保留 Cell 特有内容。
 3. Cell 落地时机定案：**代码按 Cell 最终形态实现**（数据访问层走 `ControlPlaneStore` 抽象），**部署按最小规模起步**（单节点，3 节点为生产参考配置，非 1.0 起步要求）。
 4. M12 引用修正：运维日志 ES 由 M1 部署（v1.0 误写为 M11）。
-5. M13 红线 3 适配 Cell 形态：per-space 独立 index，冷 space 可索引级降配/冻结（v1.0 沿用旧的"共享 index + custom routing"语境）。
+5. M13 红线 3 适配 Cell 形态：**每 space 独立 mixed index** 可索引级降配/冻结；**向量索引维持共享 `rms_vectors` + custom routing**（有意架构选择：per-space 向量索引 = 索引数随 space 数爆炸，数十亿 space 远景下不可行；其冷热控制靠 M6 归档同步删除向量文档）。（v1.0 沿用旧的"共享 index + custom routing 下 ES 无法索引级冻结"语境；本条 v1.2 订正——原表述丢失 mixed/vector 区分，与 §14 红线 3 行末口径矛盾，以本口径为准）
 
 ---
 
@@ -338,14 +342,14 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 
 | 去向 | 触发条件 | 动作 |
 |---|---|---|
-| 归档 | `s_effective` 跌破 θ 且按 `n_star_cached` 预测已跨越遗忘视界、再经过宽限期，期间无任何 δ 触发 | 从 JanusGraph 热图移除，归档副本（节点字段+图邻接快照）写入冷存储；EX 原始记录不受影响。**宽限期度量（v1.2 定案）：事件距离**——`n_now ≥ n_star_cached + grace_n` 才归档；期间任何 reinforce/conflict 会把 `n_star_cached` 推过 `n_now`，归档资格自动取消、无需额外状态。**禁用墙钟**：记忆动力学只在 n 域运算（静默 space 的记忆不该随日历衰减）；静默 space 的资源回收归封存层/tier 机制在基础设施层处理，两层不混。冷存储载体（v1.2 定案）：**本 space 自己的 RMS keyspace 内专用表 `archived_nodes`**（直写 CQL、不经 JanusGraph，per-table compaction 可调）；**禁止**共享 keyspace + `space_id` 分区（逻辑分区，销毁退化为 range delete）、禁止入 EX 集群（契约 1 冻结事件两表、source-of-truth 不混派生数据）、禁止 PG。销毁随 RMS keyspace 整体 DROP 自动完成；迁移 snapshot 自动携带（校验项需覆盖该表）；M7 重放重建脚本须一并重建归档表（归档判定可从 EX 确定性重推） |
+| 归档 | `s_effective` 跌破 θ 且按 `n_star_cached` 预测已跨越遗忘视界、再经过宽限期，期间无任何 δ 触发 | 从 JanusGraph 热图移除，归档副本（节点字段+图邻接快照）写入冷存储；EX 原始记录不受影响。**向量处理（v1.2 定案）：归档时同步删除 `rms_vectors` 中对应文档**（不占向量存储、不进锚点候选池），**归档快照必须携带原始 `v_i`**（embedding 不可重放，重算会漂移）；恢复/重建时以快照向量重新写入。**宽限期度量（v1.2 定案）：事件距离**——`n_now ≥ n_star_cached + grace_n` 才归档；期间任何 reinforce/conflict 会把 `n_star_cached` 推过 `n_now`，归档资格自动取消、无需额外状态。**禁用墙钟**：记忆动力学只在 n 域运算（静默 space 的记忆不该随日历衰减）；静默 space 的资源回收归封存层/tier 机制在基础设施层处理，两层不混。冷存储载体（v1.2 定案）：**本 space 自己的 RMS keyspace 内专用表 `archived_nodes`**（直写 CQL、不经 JanusGraph，per-table compaction 可调）；**禁止**共享 keyspace + `space_id` 分区（逻辑分区，销毁退化为 range delete）、禁止入 EX 集群（契约 1 冻结事件两表、source-of-truth 不混派生数据）、禁止 PG。销毁随 RMS keyspace 整体 DROP 自动完成；迁移 snapshot 自动携带（校验项需覆盖该表）；M7 重放重建脚本须一并重建归档表（归档判定可从 EX 确定性重推） |
 | 固化 | `reinforce_count` 达阈值且期间无 conflict，或显式调用 | `s` 锁定、跳过衰减计算与 sweep、检索时不再被 θ_effective 过滤。实现标记（v1.2 定案）：置 `consolidated_at` 时间戳 + `n_star_cached` 置 LONG_MAX（保证不被前置粗筛排除）；固化后 ±δ 不改 `s`（计数器照计，计数是事实记录）；固化节点被纠错时 supersedes 边照常建立（检索重定向兜底），固化态 1.0 不解除 |
 | 物理删除 | 仅用户主动请求，且**只能是整 space 销毁**（见 M10 注销流程） | 空间内单条事件不支持物理删除 |
 
 ### 事件序号 n 的实现要求（M6 依赖，写在此处便于对照）
 - 按 `space_id` 独立单调计数。
 - 分配点在 EX 摄入路径：事件写入 EX 时获得该空间下一个序号，RMS 节点创建时继承为 `n_created`。
-- `n_now` 缓存在 Redis，由摄入路径维护；缓存失效时从 EX 查询该 space 最新事件序号重建。
+- `n_now` 由摄入路径写穿维护，**Redis 中的 `ex:n` 是权威值（非缓存，无惰性重建路径）**（v1.2 定案）。配套两条硬性运维要求：① Redis 必须开 AOF 持久化（compose 配置 `appendonly yes` + `everysec`）；② 一致性巡检：Redis n vs EX MAX(n) 定期比对，发现 n 回退即告警——防 Redis 数据丢失导致序号重复分配、事件序损坏。
 - **只有经验事件推进 n；元事件（如 reinforce 追加事件）不推进 n**——否则会出现"用得越多忘得越快"的语义反转，属于严重 bug。
 
 ### 验收标准
@@ -704,9 +708,9 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 
 | 红线 | 要求 | 实现方式 |
 |---|---|---|
-| 红线 1 | 禁止全局广播/跨 space 全集群扫描 | 运维后台、批处理、数据分析任务入口**必须**绑定显式 space 列表参数；代码审查/静态检查禁止出现无 space 过滤的全表扫描调用 |
-| 红线 2 | 单 space 资源配额 | 顶点/边数量上限、ES 侧单 space 存储与向量条数上限、单次图遍历最大跳数与返回节点数上限，均需在配置中显式定义并在写入/查询路径强制校验 |
-| 红线 3 | 冷热分层 | 热 space 保障资源；冷 space 降低 sweep 频率、Redis 缓存优先逐出；Cell 架构下每 space 独立 mixed index，冷 space 可做索引级降配/冻结（设计文档 §17.2）；共享向量索引（`rms_vectors`，custom routing）无法按 space 冻结，其冷热控制靠 M6 归档机制 |
+| 红线 1 | 禁止全局广播/跨 space 全集群扫描 | 运维后台、批处理、数据分析任务入口**必须**绑定显式 space 列表参数（argparse 含 `--space(s)`，静态扫描强制）；代码审查/静态检查禁止出现无 space 过滤的全表扫描调用。**常驻 worker 合规定义（v1.2 定案）**：红线禁止的是无 space 纪律的数据面扫描；经 `ControlPlaneStore.list_spaces()` 枚举、逐 space 独立处理的常驻 worker（FS sweep / DMS / exporter 等）**本身即合规**，但须满足豁免三要件并机器可读登记（如 `@redline1_exempt(worker=..., reason=...)`，静态扫描器只认登记不认注释）：① 枚举走 ControlPlaneStore（禁直连存储元数据）；② 逐 space 独立处理单元（故障隔离、无跨 space 查询）；③ 批间节流（登记时声明节奏，防豁免 worker 变成伪装的全集群轰炸）。新增豁免必须显式登记，可审查 |
+| 红线 2 | 单 space 资源配额 | 顶点/边数量上限、ES 侧单 space 存储与向量条数上限、单次图遍历最大跳数与返回节点数上限，均需在配置中显式定义并在写入/查询路径强制校验。**落地形态（v1.2 定案）**：`QuotaConfig`（全局默认 + 按 tier 可选覆盖，1.0 不做 per-space 定制）；写入侧顶点/边/向量条数硬校验——落在现有 `writer.py` 与向量写入路径（不等 M15 接入），图 count 带短 TTL 缓存摊销（**近似执行、超发有界**，配置注释写明）、ES count 走 O(1) count API；查询侧复用 `RetrieveConfig` 的 max_depth/beam_width/token_budget 并**补返回节点数硬上限**；内部抛 `QuotaExceeded`，API 层映射既有 429 `rate_limited`（不新增契约错误码，`message` 区分 quota 字样）；ES 存储字节不上硬校验，走 `space_storage_bytes` 指标监控 |
+| 红线 3 | 冷热分层 | 热 space 保障资源；冷 space 降低 sweep 频率；Cell 架构下每 space 独立 mixed index，冷 space 可做索引级降配/冻结（设计文档 §17.2）；共享向量索引（`rms_vectors`，custom routing）无法按 space 冻结，其冷热控制靠 M6 归档机制。**Redis 逐出项豁免（v1.2 定案）**：现存 Redis 键均为小键（`ex:n` 权威计数、`ex:last_write`、sweep 心跳），无大对象，逐出无内存收益且 `ex:n` 逐出会破坏 n 分配——不设逐出策略、不配 maxmemory-policy 逐出（防未来误伤权威键）；未来出现真实大对象缓存层时再议冷热逐出 |
 | 红线 4 | `ids.authority.wait-time` 保持默认 | 见 §1 强制配置项，需巡检脚本 |
 | 红线 5 | 禁止在线 DROP keyspace | 所有涉及 keyspace 删除的流程（M9/M10 注销）必须先驱逐计算实例 |
 | 红线 6 | 节点时钟同步硬性前提 | NTP 硬化 + 偏移监控，见 §1 |
@@ -714,7 +718,8 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 ### 验收标准
 - [ ] 静态扫描/代码审查工具能拦截"无 space_id 过滤的批量查询"提交。
 - [ ] 单 space 配额在压测下触发限流/拒绝（不是仅存在配置项而未强制执行）。
-- [ ] 冷 space 的 sweep 频率与 Redis 缓存逐出策略确实低于热 space（对比测试）。
+- [ ] 冷 space 的 sweep 频率确实低于热 space（对比测试）；Redis 逐出项按豁免论证处理（v1.2 定案：现存键均为小键无内存收益、不设逐出策略，论证写入汇总核验记录）。
+- [ ] Redis 持久化与 n 一致性巡检落地（v1.2 定案，配合 `ex:n` 权威值形态）：compose 配 AOF（`appendonly yes` + `everysec`）；巡检脚本比对 Redis n 与 EX MAX(n)，回退即告警。
 - [ ] 红线 4/5/6 均已在 M1/M9/M10 中有对应验收项，此处做汇总核验。
 
 ---

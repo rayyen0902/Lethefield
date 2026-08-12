@@ -220,6 +220,8 @@ def test_archive_end_to_end(stack, space):
     assert snapshot["props"]["ref_ex"] == "ex-old"  # EX 溯源链保留
     assert snapshot["props"]["tau"] == TAU
     assert snapshot["edges"] == [{"label": "temporal", "out_key": "old", "in_key": "peer"}]
+    # M13 红线 3：快照携带原始向量 v_i（embedding 不可重放，快照即载体）
+    assert snapshot["v"] == [1.0, 0.0, 0.0, 0.0]
 
     # ES 向量文档已删（防 Stage 2 召回死引用）
     assert not stack.es.exists(index=VECTORS_INDEX, id=f"{space}:old", routing=space)

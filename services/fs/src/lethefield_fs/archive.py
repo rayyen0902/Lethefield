@@ -4,7 +4,9 @@
 `archived_nodes`，直写 CQL、不经 JanusGraph；表名与 CQL 全部封装在
 libs/clients（lethefield_clients.archive），本模块不裸写 CQL。
 
-快照内容 = 节点全字段 + 图邻接（出入边 label + 对端 node_key）；EX 原始记录
+快照内容 = 节点全字段 + 图邻接（出入边 label + 对端 node_key）+ 原始向量 v_i
+（M13 红线 3 定案：归档时同步删除 rms_vectors 文档，快照必须携带 v_i——
+embedding 不可重放、重算会漂移，恢复/重建以快照向量回写）。EX 原始记录
 不受影响，ref_ex 保证可溯源重建。M7 重放重建经 list_archived 读回。
 """
 
@@ -14,7 +16,7 @@ from cassandra.cluster import Session
 from elasticsearch import Elasticsearch
 from gremlin_python.driver.client import Client
 from lethefield_clients import ensure_archive_table, write_archive
-from lethefield_rms.vectors import delete_vector
+from lethefield_rms.vectors import delete_vector, get_vector
 
 # 归档顶点全字段（node_type 恒为 event，不存；consolidated_at 不会出现在归档节点上——
 # 固化节点永不满足归档资格）
@@ -53,11 +55,14 @@ def _merge_entries(result: list) -> dict:
     return {k: v[0] for k, v in merged.items()}
 
 
-def build_snapshot(props: dict, edges: list[dict]) -> dict:
+def build_snapshot(props: dict, edges: list[dict], v: list[float] | None = None) -> dict:
     """构造 JSON 可序列化的归档快照（tau 等 Date 转 epoch 毫秒，保证重建可解析）。
 
     gremlin_python 反序列化的 Date 是 naive datetime（UTC 语义）——
     直接 .timestamp() 会被当本地时间，必须先按 UTC 解释。
+
+    v = 原始向量 v_i（M13 红线 3 定案：embedding 不可重放，归档删除 rms_vectors
+    文档后快照即 v_i 的唯一载体；取不到时为 None，由调用方登记缺口）。
     """
     normalized = {}
     for key, value in props.items():
@@ -66,7 +71,7 @@ def build_snapshot(props: dict, edges: list[dict]) -> dict:
             normalized[key] = int(aware.timestamp() * 1000)
         else:
             normalized[key] = value
-    return {"props": normalized, "edges": edges}
+    return {"props": normalized, "edges": edges, "v": v}
 
 
 def archive_node(
@@ -78,7 +83,7 @@ def archive_node(
     space_id: str,
     node_key: str,
 ) -> dict:
-    """归档单个节点：快照 → 写 archived_nodes → 删 ES 向量 → 热图移除。返回快照。"""
+    """归档单个节点：快照（含 v_i）→ 写 archived_nodes → 删 ES 向量 → 热图移除。返回快照。"""
     bindings = {"gname": gname, "spaceId": space_id, "nodeKey": node_key}
     props = _merge_entries(client.submit(_PROPS_SCRIPT, bindings).all().result())
     if not props:
@@ -88,7 +93,9 @@ def archive_node(
         for item in client.submit(_EDGES_SCRIPT, bindings).all().result()
         for k, v in item.items()
     }
-    snapshot = build_snapshot(props, edges_payload.get("edges", []))
+    # 删 ES 前先取 v_i（M13 红线 3：快照必须携带原始向量，embedding 不可重放）
+    vector = get_vector(es, space_id=space_id, node_key=node_key)
+    snapshot = build_snapshot(props, edges_payload.get("edges", []), vector)
 
     ensure_archive_table(cell_session, gname)
     write_archive(cell_session, gname, node_key=node_key, snapshot=snapshot)

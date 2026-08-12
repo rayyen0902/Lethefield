@@ -179,3 +179,30 @@ def test_archive_snapshot_includes_supersedes_edges():
     labels = {(e["label"], e["out_key"], e["in_key"]) for e in snapshot["edges"]}
     assert ("supersedes", node_key_of("e2"), node_key_of("e1")) in labels
     assert ("temporal", node_key_of("e1"), node_key_of("e2")) in labels
+
+
+def test_archive_snapshot_carries_vector_from_lookup():
+    # M13 红线 3：归档快照携带原始 v_i——vector_lookup 注入取数，命中进快照、未命中 None
+    events = [_event(n) for n in range(1, 46)]
+
+    def lookup(node_key: str) -> list[float] | None:
+        return [0.1, 0.2] if node_key == node_key_of("e1") else None
+
+    plan = replay_events(
+        events,
+        [],
+        s_resolver=lambda e: 0.31,
+        ff_config=_NO_NEGLECT,
+        vector_lookup=lookup,
+    )
+    archived = dict(plan.archives)
+    assert archived[node_key_of("e1")]["v"] == [0.1, 0.2]
+    assert archived[node_key_of("e2")]["v"] is None  # 查不到 → None（缺口由执行层登记）
+
+
+def test_archive_snapshot_without_lookup_v_none():
+    # 未注入 vector_lookup：v 恒 None，纯重放模型保持无 IO
+    events = [_event(n) for n in range(1, 46)]
+    plan = replay_events(events, [], s_resolver=lambda e: 0.31, ff_config=_NO_NEGLECT)
+    assert plan.archives  # 前提：确实有归档发生
+    assert all(snapshot["v"] is None for _, snapshot in plan.archives)

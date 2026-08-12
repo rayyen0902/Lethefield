@@ -15,6 +15,7 @@ from datetime import datetime
 import redis as redis_lib
 from lethefield_clients.control_plane import ControlPlaneStore, Tier
 from lethefield_clients.ex_n import last_write_at
+from lethefield_clients.redline import redline1_exempt
 from lethefield_logschema import LogEvent
 from lethefield_metrics import gauge as _metric_gauge
 from prometheus_client import REGISTRY as _DEFAULT_REGISTRY
@@ -45,6 +46,14 @@ HOT_TIERS = frozenset({Tier.HOT, Tier.PREMIUM})
 STALE_KEY_PREFIX = "dms:stale:"
 
 
+@redline1_exempt(
+    worker="ingest-dms/freshness",
+    reason=(
+        "枚举走 ControlPlaneStore.list_spaces()（映射表 active 集合）；"
+        "逐 space 独立读 Redis 新鲜度键判定；批间节流由 DMS 轮询节奏承担"
+    ),
+    cadence="随 ingest-dms 轮询（DmsConfig.loop_interval_seconds）",
+)
 def check_freshness(
     redis: redis_lib.Redis,
     store: ControlPlaneStore,

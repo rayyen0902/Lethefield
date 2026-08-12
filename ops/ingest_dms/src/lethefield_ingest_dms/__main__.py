@@ -4,7 +4,7 @@
 （测试/巡检用）。告警打印 LogEvent JSONL 到 stderr；本轮存在 page 级告警时
 退出码 1，否则 0（对齐 clock_monitor 语义——loop 模式持续运行不退出）。
 
-单路探测失败（admin REST 不可达、控制面连接失败等）不阻塞其他两路，
+单路探测失败（admin REST 不可达、控制面连接失败等）不阻塞其他路，
 失败本身即 page 级告警事件——DMS 不以"探测脚本没跑成"为摄入正常的证据。
 """
 
@@ -13,7 +13,7 @@ import sys
 import time
 from datetime import UTC, datetime
 
-from lethefield_clients import factories
+from lethefield_clients import factories, redline1_exempt
 from lethefield_clients.control_plane import MappingTableControlPlaneStore
 from lethefield_logschema import LogEvent
 from lethefield_logschema import emit as emit_event
@@ -22,6 +22,7 @@ from lethefield_metrics import metrics_port_from_env, start_metrics_server
 from lethefield_ingest_dms.backlog import check_backlog, fetch_training_backlog, report_backlog
 from lethefield_ingest_dms.config import DmsConfig
 from lethefield_ingest_dms.freshness import check_freshness
+from lethefield_ingest_dms.n_consistency import collect_n_consistency
 from lethefield_ingest_dms.probe import (
     ensure_monitoring_topic,
     probe_pipeline,
@@ -43,8 +44,17 @@ def _failure_event(event_type: str, error: Exception) -> LogEvent:
     )
 
 
+@redline1_exempt(
+    worker="ingest-dms",
+    reason=(
+        "space 枚举走 MappingTableControlPlaneStore.list_spaces()（freshness/n_consistency "
+        "两路）；逐 space 独立比对（Redis 键 + EX MAX(n)，无跨 space 联合查询）；"
+        "批间节流 = 轮询循环节奏"
+    ),
+    cadence="DmsConfig.loop_interval_seconds（env LETHEFIELD_DMS_LOOP_INTERVAL_SECONDS）",
+)
 def run_once(config: DmsConfig) -> list[LogEvent]:
-    """单轮三路巡检，返回本轮全部告警事件（空 = 无告警）。"""
+    """单轮四路巡检，返回本轮全部告警事件（空 = 无告警）。"""
     alerts: list[LogEvent] = []
     now = datetime.now(UTC)
     redis = factories.redis_client()
@@ -82,6 +92,15 @@ def run_once(config: DmsConfig) -> list[LogEvent]:
     except Exception as exc:
         alerts.append(_failure_event("space_write_stale", exc))
 
+    # 4. n 一致性（page 级，M13 红线 3 配套）：Redis ex:n vs EX MAX(n)，
+    #    n 回退 = 序号重复分配风险；连接建立与第 3 路同款先例（进程级巡检，随退出回收）
+    try:
+        n_store = MappingTableControlPlaneStore(factories.cassandra_cluster().connect())
+        ex_session = factories.ex_cassandra_cluster().connect()
+        alerts.extend(collect_n_consistency(redis, ex_session, n_store))
+    except Exception as exc:
+        alerts.append(_failure_event("ex_n_consistency_failed", exc))
+
     return alerts
 
 
@@ -103,7 +122,7 @@ def main() -> int:
         has_page = any(e.payload.get("level") == "page" for e in alerts)
         if args.once:
             if not alerts:
-                print("DMS 巡检通过：探针活性 / 训练控制 backlog / 写入新鲜度均正常")
+                print("DMS 巡检通过：探针活性 / 训练控制 backlog / 写入新鲜度 / n 一致性均正常")
             return 1 if has_page else 0
         time.sleep(config.loop_interval_seconds)
 

@@ -6,6 +6,13 @@ v_i 不进 JanusGraph、也不与全文/属性字段同索引共存（开发文�
 
 from elasticsearch import Elasticsearch
 
+from lethefield_rms.quota import (
+    DEFAULT_QUOTA_CONFIG,
+    QuotaConfig,
+    QuotaCounters,
+    check_quota,
+)
+
 VECTORS_INDEX = "rms_vectors"
 
 
@@ -58,11 +65,18 @@ def index_vector(
     content: str | None = None,
     index: str = VECTORS_INDEX,
     refresh: bool = True,
+    quota: QuotaConfig = DEFAULT_QUOTA_CONFIG,
+    quota_counters: QuotaCounters | None = None,
 ) -> None:
     """写入向量文档：routing = space_id（custom routing 定案），doc id 含 space 前缀便于清理。
 
     content 供 Stage 2 关键词检索（M4）；为 None 时不落该字段。
+
+    红线 2（M13）：写入前查向量条数配额（先查后写）。quota_counters 为 None
+    时用传入 es 现场构造（向量计数只需 es，client=None）。
     """
+    counters = quota_counters or QuotaCounters(None, es, quota)
+    check_quota("vector", counters.vector_count(space_id), quota, space_id=space_id)
     document = {"node_key": node_key, "space_id": space_id, "v": vector}
     if content is not None:
         document["content"] = content
@@ -73,6 +87,25 @@ def index_vector(
         routing=space_id,
         refresh=refresh,
     )
+
+
+def get_vector(
+    es: Elasticsearch,
+    *,
+    space_id: str,
+    node_key: str,
+    index: str = VECTORS_INDEX,
+) -> list[float] | None:
+    """读取向量原文 v_i（M13 红线 3 定案：归档快照必须携带 v_i 的取数口）。
+
+    按 id {space}:{node_key} + routing 读取；文档不存在（404）返回 None。
+    """
+    response = es.options(ignore_status=404).get(
+        index=index, id=f"{space_id}:{node_key}", routing=space_id
+    )
+    if not response.get("found"):
+        return None
+    return response["_source"]["v"]
 
 
 def delete_vector(

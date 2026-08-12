@@ -57,6 +57,7 @@ from lethefield_clients.factories import (
     redis_client,
 )
 from lethefield_clients.mapping_cache import MappingCache
+from lethefield_clients.redline import redline1_exempt
 from lethefield_clients.spaces import SPACE_ID_MAX_LEN, SpaceType, validate_space_id
 from lethefield_clients.training_control import (
     CONTROL_NAMESPACE,
@@ -148,6 +149,7 @@ __all__ = [
     "pg_connection",
     "pulsar_client",
     "redis_client",
+    "redline1_exempt",
     "restore_jsonl",
     "space_ref_of",
     "touch_last_write",

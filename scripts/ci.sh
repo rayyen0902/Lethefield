@@ -17,6 +17,12 @@ uv run pytest libs ops services -q
 echo "==> M8 space model check"
 uv run python scripts/check_space_model.py
 
+echo "==> M13 redline 1 static scan"
+uv run python scripts/check_space_filter.py
+
+echo "==> M13 redlines summary check (static)"
+uv run python scripts/check_redlines.py
+
 echo "==> docker compose up"
 docker compose up -d
 bash scripts/wait_for_stack.sh

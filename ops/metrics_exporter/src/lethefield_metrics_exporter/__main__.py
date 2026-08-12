@@ -9,6 +9,7 @@ from lethefield_clients import (
     cassandra_cluster,
     es_client,
     ex_cassandra_cluster,
+    redline1_exempt,
 )
 from lethefield_metrics import metrics_port_from_env, start_metrics_server
 
@@ -19,6 +20,14 @@ from lethefield_metrics_exporter.exporter import ExporterDeps, run_once
 _OPS_ES_URL = os.environ.get("LETHEFIELD_OPS_ES_URL", "http://localhost:9201")
 
 
+@redline1_exempt(
+    worker="metrics-exporter",
+    reason=(
+        "常驻聚合 worker 入口：聚合循环 exporter.run_once 已登记（三要件见其装饰器）；"
+        "本入口不直接触存储，只组装依赖与节奏"
+    ),
+    cadence="ExporterConfig.poll_interval_seconds 轮询",
+)
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="metrics_exporter",

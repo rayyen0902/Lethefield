@@ -5,8 +5,9 @@
 
 from datetime import UTC, datetime
 
+from lethefield_clients.control_plane import Tier
 from lethefield_fs.archive import build_snapshot
-from lethefield_fs.config import DEFAULT_SWEEP_CONFIG, HEARTBEAT_KEY
+from lethefield_fs.config import DEFAULT_SWEEP_CONFIG, HEARTBEAT_KEY, SweepConfig, sweep_due
 from lethefield_fs.liveness import check_liveness
 from lethefield_fs.sweep import consolidate_due, neglect_due, refresh_due
 
@@ -72,6 +73,48 @@ class TestBuildSnapshot:
         # gremlin_python 反序列化的 Date 是 naive datetime（UTC 语义）
         snapshot = build_snapshot({"tau": datetime(2026, 8, 5)}, [])
         assert snapshot["props"]["tau"] == 1785888000000
+
+    def test_snapshot_carries_vector(self):
+        # M13 红线 3：归档快照必须携带原始 v_i（embedding 不可重放，快照即载体）
+        snapshot = build_snapshot({"content": "c"}, [], [0.1, 0.2, 0.3])
+        assert snapshot["v"] == [0.1, 0.2, 0.3]
+
+    def test_snapshot_vector_defaults_none(self):
+        assert build_snapshot({}, [])["v"] is None
+
+
+class TestSweepDue:
+    """sweep_due 判定矩阵（M13 红线 3 冷热分频）：hot/premium/未知按热节奏，cold 降频。"""
+
+    CONFIG = SweepConfig(sweep_interval_seconds=60.0, cold_interval_seconds=600.0)
+
+    def test_never_swept_always_due(self):
+        for tier in (None, Tier.HOT, Tier.COLD, Tier.PREMIUM, "weird"):
+            assert sweep_due(tier, None, now=1000.0, config=self.CONFIG)
+
+    def test_hot_uses_hot_interval(self):
+        assert not sweep_due(Tier.HOT, 941.0, now=1000.0, config=self.CONFIG)  # 59s < 60s
+        assert sweep_due(Tier.HOT, 940.0, now=1000.0, config=self.CONFIG)  # 60s 边界 due
+        assert sweep_due(Tier.HOT, 100.0, now=1000.0, config=self.CONFIG)  # 远超冷阈值也 due
+
+    def test_premium_uses_hot_interval(self):
+        assert not sweep_due(Tier.PREMIUM, 941.0, now=1000.0, config=self.CONFIG)
+        assert sweep_due(Tier.PREMIUM, 940.0, now=1000.0, config=self.CONFIG)
+
+    def test_cold_uses_cold_interval(self):
+        assert not sweep_due(Tier.COLD, 940.0, now=1000.0, config=self.CONFIG)  # 60s 不够
+        assert not sweep_due(Tier.COLD, 401.0, now=1000.0, config=self.CONFIG)  # 599s < 600s
+        assert sweep_due(Tier.COLD, 400.0, now=1000.0, config=self.CONFIG)  # 600s 边界 due
+
+    def test_cold_accepts_plain_string(self):
+        # Tier 是 StrEnum：str 入参与枚举同效
+        assert not sweep_due("cold", 940.0, now=1000.0, config=self.CONFIG)
+        assert sweep_due("cold", 400.0, now=1000.0, config=self.CONFIG)
+
+    def test_unknown_tier_falls_back_to_hot(self):
+        # 未知/缺失 tier 按 hot（保障优先）
+        assert sweep_due(None, 940.0, now=1000.0, config=self.CONFIG)
+        assert sweep_due("weird", 940.0, now=1000.0, config=self.CONFIG)
 
 
 class FakeRedis:

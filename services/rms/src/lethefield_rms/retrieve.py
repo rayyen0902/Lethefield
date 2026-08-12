@@ -67,6 +67,7 @@ class RetrieveConfig:
     full_relevance_min: float = 0.5  # 保留完整细节的 relevance 下限（归一化后）
     full_s_min: float = 0.5  # 保留完整细节的 s_effective 下限
     max_supersedes_chain: int = 16  # supersedes 链解析防环上限
+    max_returned_nodes: int = 50  # 返回节点数硬上限（红线 2 明列项，占位待标定）
 
 
 DEFAULT_RETRIEVE_CONFIG = RetrieveConfig()
@@ -572,7 +573,9 @@ def _est_tokens(text: str) -> int:
 
 
 def _stage4_budget(candidates: list[ScoredNode], *, config: RetrieveConfig) -> list[NodeItem]:
-    """双权重贪心装预算：relevance 与 s_effective 都高 → 完整；相关但 s 低 → 压缩。"""
+    """双权重贪心装预算：relevance 与 s_effective 都高 → 完整；相关但 s 低 → 压缩。
+
+    装预算后按 config.max_returned_nodes 截断（返回节点数硬上限，红线 2 明列项）。"""
 
     def relevance(node: ScoredNode) -> float:
         if node.s_effective is None:
@@ -604,7 +607,8 @@ def _stage4_budget(candidates: list[ScoredNode], *, config: RetrieveConfig) -> l
         items.append(
             NodeItem(node.node_key, content, node.tau, node.s_effective, rel, brief=not full)
         )
-    return items
+    # 返回节点数硬上限（红线 2，M13）：装预算后按序截断，保持原排序
+    return items[: config.max_returned_nodes]
 
 
 # ---------------------------------------------------------------- 主入口

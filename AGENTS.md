@@ -2,12 +2,11 @@
 
 ## 项目阶段
 
-M0–M12（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
+M0–M13（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
 FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租户调度器 /
-EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线 / 可观测性埋点）已完成并验证
-（M0–M12 CI 全绿）。
-**下一个模块：M13 多租户工程红线落地**（开发文档 §14：六条红线转可自动化检查——
-静态扫描拦截无 space 过滤的批量查询、单 space 配额强制、冷热分层对比、红线 4/5/6 汇总核验）。
+EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线 / 可观测性埋点 /
+多租户工程红线落地）已完成并验证（M0–M13 CI 全绿）。
+**下一个模块：M14 SS 显著性打分服务**（开发文档 §15）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -151,6 +150,35 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   worker `RecallWindow.mark_seen` 按 ID 去重（缺 event_id fail-closed）；API 训练 topic
   发布代码已整体删除。compose 新增 prometheus(9090)/grafana(3000)（scrape 走
   host.docker.internal——服务在宿主机 uv run；Grafana provisioning datasource + 三线六面板）。
+- M13 定案（六条红线工程化，升级确认已入档开发文档 §14）：红线 1 =
+  `scripts/check_space_filter.py`（AST 三规则：图遍历字符串必须同串 `has('space_id'`
+  ——纯 `.V().count()`/`.E().count()` 豁免（per-space 图计数，图名即 space）；跨
+  space/集群级调用（getGraphNames/size_estimates/indices.stats/list_spaces 系/lethefield-logs
+  读取）所在文件须带 `@redline1_exempt(worker=, reason=, cadence=)` 登记（装饰器单点
+  `libs/clients/redline.py`，**扫描器只认登记不认注释**）或进内置豁免表；含 argparse 的
+  入口必须有 `--space(s)`/`space_id` 收敛口或豁免）。红线 2 = `lethefield_rms.quota`
+  （QuotaConfig 顶点/边/向量上限占位 1M/5M/1M 待标定；**图 count 短 TTL 缓存 = 近似执行、
+  超发有界**；writer 三原语 + `index_vector` 默认开启强校验（M15 写入链接入即继承）；
+  `QuotaExceeded` → API 429 rate_limited、message 含 quota_exceeded（不新增契约码）；
+  `RetrieveConfig.max_returned_nodes` 返回节点数硬上限；ES 字节走 space_storage_bytes
+  监控非配额；`quota_for_tier` 覆盖机制留着，1.0 不做 per-space）。
+  **`QuotaCounters.vector_count` 必须 routing + space_id term 双机制**——只带 routing 会把
+  共享分片上他 space 文档计入（M13 实测 27 条串计数致误拒），与 kNN 零泄漏同款教训。
+  红线 3 = sweep 冷热分频（`lethefield_fs.config.sweep_due` 纯函数：cold 走
+  `cold_interval_seconds` 占位 600s、hot/premium/未知 tier 走热节奏保障优先；tier 经
+  `list_space_mappings()` 每轮取，last-swept 复用 `fs:sweep:last_ok:{space}` 心跳键）；
+  **Redis 逐出豁免定案**（现存键全小键、ex:n 是权威计数非缓存、逐出会破坏 n 分配）——
+  不配 maxmemory-policy，配套 = compose redis AOF（appendonly yes + everysec）+ DMS 第 4 路
+  n 一致性巡检（Redis ex:n vs EX MAX(n)，回退 = 序号重复分配风险，page 级；键缺失不告警，
+  n_now 重建是设计路径）。**归档快照必须携带原始 v_i**（embedding 不可重放）：
+  archive_node 删 ES 文档前先 get_vector 进快照 `"v"` 键；rebuild 经 `vector_lookup`
+  注入保持 replay 纯函数，执行层两级 lookup（源侧旧 archived_nodes → rms_vectors），
+  缺口 emit `rebuild_vector_missing`；migrate 传 `source_cell_session` + es 走源侧 lookup。
+  **共享 rms_vectors 维持定案**（per-space 向量索引 = 索引数随 space 爆炸，不留活口）。
+  红线 4/5/6 = `scripts/check_redlines.py` 汇总核验（静态进 CI；红线 5 口径 = destroy 全文
+  位置比对、migrate 按 `_evict_graph` 先于 `_drop_graph_storage` 调用点比对——EX scratch
+  DROP 不属红线 5 语义；`--runtime` 跑 clock_monitor + check_graph_config，集成测试调起）。
+  两个脚本均已接 ci.sh。
 - ES 排序不能用 `_id`（fielddata 限制，报 search_phase_execution_exception）——日志游标
   按 timestamp 单字段排序，同毫秒边界重读由 event_id 去重兜底（M12 实测）。
 - 拉新镜像注意：colima VM 的 dockerd 代理指向宿主机 192.168.5.2:7897，若宿主机代理只监听
@@ -192,7 +220,7 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
 | `uv run python -m lethefield_scheduler watermark [--cell ID]` / `list` | M9：水位刷新 / 映射一览 |
 | `uv run python -m lethefield_scheduler migrate <space> [--to-cell ID]` | M10：跨 Cell 迁移（实测只读窗口入报告） |
 | `uv run python -m lethefield_scheduler.training_control_sink [--once]` | M10：契约 5 销毁指令最小接收 consumer |
-| `uv run python -m lethefield_ingest_dms [--once]` | M10：EX 摄入 DMS 巡检（探针/backlog/新鲜度），page 告警退出码 1 |
+| `uv run python -m lethefield_ingest_dms [--once]` | M10：EX 摄入 DMS 巡检（探针/backlog/新鲜度/n 一致性四路），page 告警退出码 1 |
 | `uv run python -m lethefield_training worker [--once]` | M11：加工 worker（feed 消费 + 契约 5 销毁处置 + 热层落盘） |
 | `uv run python -m lethefield_training scrub <space_ref>` | M11：撤回授权存量处置（O(清单) 定位、内容清除、骨架保留，幂等） |
 | `uv run python -m lethefield_training submit-incident --problem P --diagnosis D --decision C --outcome O` | M11：② 入料口（故障/混沌案例提交，rule=R5） |
@@ -201,6 +229,8 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
 | `uv run python -m lethefield_training recall-filter [--once]` | M12：③ 过滤器（es-ops 召回明细 → 授权闸门 → 训练 topic，checkpoint） |
 | `uv run python -m lethefield_metrics_exporter [--once]` | M12：离线聚合 worker（日志流/元数据 → 指标，:9104 暴露口） |
 | `open http://localhost:9090` / `:3000`（admin/admin） | M12：Prometheus / Grafana（compose 常驻，dashboard 已 provision） |
+| `uv run python scripts/check_space_filter.py` | M13：红线 1 静态扫描（无 space 过滤遍历 / 未登记跨 space 调用 / 入口缺 --space 收敛口） |
+| `uv run python scripts/check_redlines.py [--runtime]` | M13：红线 4/5/6 汇总核验 + Redis 豁免记录（--runtime 需全栈，集成测试调起） |
 | `docker compose --profile cell2 up -d` 后 `uv run pytest tests/integration/test_m10_migration_drill.py` | M10：跨 Cell 迁移演练（按需，不占常驻内存；默认 CI 自动 skip） |
 
 ## 约定

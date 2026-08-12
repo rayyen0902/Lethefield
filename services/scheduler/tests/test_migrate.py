@@ -168,14 +168,21 @@ def _deps(events, *, target_vertices=5, target_edges=4) -> MigrateDeps:
     )
 
 
+class _Events(list):
+    """事件记录列表，可挂附加属性（pipeline fixture 的 rebuild_calls）。"""
+
+
 @pytest.fixture
 def pipeline(monkeypatch):
     """把 RMS 重建/向量复制/EX 迁移替换为事件记录器（编排测试；各自的真实实现另有覆盖）。
 
     rebuild 返回 5v/4e 的 fake 计划（与 _FakeGremlin 默认计数一致）——等价校验
     对齐"目标图 == EX 重放计划"语义（M10 定案：EX 是唯一 source of truth）。
+    rebuild_calls 记录 rebuild_space 实参（M13：归档 v_i lookup 必须走源侧注入）。
     """
-    events: list[str] = []
+    events = _Events()
+    rebuild_calls: list[tuple] = []
+    events.rebuild_calls = rebuild_calls
     plan = SimpleNamespace(
         nodes=[SimpleNamespace(node_key=f"n{i}") for i in range(5)],
         temporal_edges=[(f"n{i}", f"n{i + 1}") for i in range(4)],
@@ -184,6 +191,7 @@ def pipeline(monkeypatch):
 
     def fake_rebuild(*a, **kw):
         events.append("build:rebuild")
+        rebuild_calls.append((a, kw))
         return plan
 
     monkeypatch.setattr(
@@ -242,6 +250,21 @@ def test_auto_select_excludes_source(pipeline):
     events = pipeline
     report = migrate_space(_deps(events), "sp1")
     assert report.target_cell_id == "cell-2"  # select_cell(exclude={cell-1})
+
+
+def test_rebuild_gets_source_side_vector_lookup(pipeline):
+    """M13 红线 3：迁移链 rebuild_space 的归档 v_i lookup 走源侧（源 Cell session + 源 ES）。
+
+    目标 Cell 上既没有旧 archived_nodes 快照、rms_vectors 文档也还没复制过去——
+    不注源侧句柄归档快照会全落 v=None。
+    """
+    events = pipeline
+    deps = _deps(events)
+    migrate_space(deps, "sp1", grace_seconds=0)
+    assert len(events.rebuild_calls) == 1
+    _, kw = events.rebuild_calls[0]
+    assert kw["es"] is deps.source_es
+    assert kw["source_cell_session"] is deps.source_cell_session
 
 
 def test_verify_mismatch_rolls_back(pipeline, monkeypatch):

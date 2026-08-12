@@ -5,6 +5,13 @@
 写 Redis 心跳（全局 + 每 space）。停摆检测由 liveness 巡检承担（Dead Man's Switch，
 sweep 停摆 = 忽视惩罚静默失效，设计文档 §7.5.1 同构故障）。
 
+M13 红线 3 冷热分频：store 为映射表实现时按 tier 分频——cold space 按
+SweepConfig.cold_interval_seconds 降频（per-space 心跳键复用为 last-swept 时间戳），
+hot/premium/未知 tier 按热节奏（保障优先）。冷 space 未到期即跳过是预期行为：
+不写心跳、不计指标。注意 liveness 语义不变——全局键仍每轮写、
+stale_after_seconds 仍管全局停摆检测；冷 space 的 per-space 心跳间隔变长
+是设计预期，不是停摆信号（liveness 只读全局键，不受分频影响）。
+
 图名 = space_id（M5 冻结契约；sweep 枚举源即映射表 active 集合）。
 """
 
@@ -17,12 +24,14 @@ from gremlin_python.driver.client import Client
 from lethefield_clients import (
     ControlPlaneStore,
     MappingTableControlPlaneStore,
+    Tier,
     cassandra_cluster,
     es_client,
     ex_cassandra_cluster,
     gremlin_client,
     n_now,
     redis_client,
+    redline1_exempt,
 )
 from lethefield_logschema import LogEvent
 from lethefield_logschema import emit as emit_event
@@ -33,7 +42,7 @@ from lethefield_rms import ff
 from prometheus_client import REGISTRY as _DEFAULT_REGISTRY
 from redis import Redis
 
-from lethefield_fs.config import DEFAULT_SWEEP_CONFIG, HEARTBEAT_KEY, SweepConfig
+from lethefield_fs.config import DEFAULT_SWEEP_CONFIG, HEARTBEAT_KEY, SweepConfig, sweep_due
 from lethefield_fs.sweep import SweepStats, sweep_space
 
 # fs sweep 进程 /metrics 暴露口默认端口（M12 端口约定，env LETHEFIELD_METRICS_PORT 可覆盖）
@@ -53,6 +62,26 @@ _SWEEP_LAG = _metric_gauge(
 )
 
 
+def _read_last_swept(redis: Redis, space: str) -> float | None:
+    """读 per-space 心跳作 last-swept 时间戳；缺失或解析失败按 None（恒 due，fail-open 向扫）。"""
+    raw = redis.get(f"{HEARTBEAT_KEY}:{space}")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+@redline1_exempt(
+    worker="fs-sweep",
+    reason=(
+        "枚举走 ControlPlaneStore.list_spaces()（映射表 active 集合）；"
+        "逐 space 独立 sweep_space（单 space 图 + per-space n_now，无跨 space 联合查询）；"
+        "批间节流 = 轮间 sleep + 冷 space 分频跳过"
+    ),
+    cadence="SweepConfig.sweep_interval_seconds（默认 60s）；cold 按 cold_interval_seconds 降频",
+)
 def run_once(
     store: ControlPlaneStore,
     client: Client,
@@ -64,13 +93,24 @@ def run_once(
     config: SweepConfig = DEFAULT_SWEEP_CONFIG,
     ff_config: ff.FFConfig = ff.DEFAULT_CONFIG,
 ) -> dict[str, SweepStats]:
-    """执行一整轮 sweep（全部 space），写心跳与指标，返回每 space 计数。"""
+    """执行一整轮 sweep，写心跳与指标，返回每 space 计数（本轮跳过的 space 不进返回值）。
+
+    红线 3（M13）：store 为映射表实现时每轮重取 tier 映射分频，cold space 未到期
+    跳过（不写心跳、不计指标）；取不到 tier 信息的 space 一律按 hot 保障优先。
+    """
     prev = redis.get(HEARTBEAT_KEY)
     if prev is not None:
         _SWEEP_LAG.set(time.time() - float(prev))
 
+    # tier 映射每轮重取（控制面规模，开销可忽略）；非映射表实现取不到 tier，全按 hot
+    tiers: dict[str, Tier] = {}
+    if isinstance(store, MappingTableControlPlaneStore):
+        tiers = {m.space_id: m.tier for m in store.list_space_mappings()}
+
     results: dict[str, SweepStats] = {}
     for space in store.list_spaces():
+        if not sweep_due(tiers.get(space), _read_last_swept(redis, space), time.time(), config):
+            continue  # 冷 space 未到期：本轮跳过（红线 3 预期行为）
         stats = sweep_space(
             client,
             cell_session,
@@ -107,11 +147,13 @@ def main(argv: list[str] | None = None) -> int:
 
     config = DEFAULT_SWEEP_CONFIG
     if args.interval is not None:
+        # 只覆盖热节奏（sweep_interval_seconds）；冷节奏 cold_interval_seconds 不受影响
         config = SweepConfig(
             sweep_interval_seconds=args.interval,
             consolidate_reinforce_threshold=config.consolidate_reinforce_threshold,
             near_horizon_margin=config.near_horizon_margin,
             stale_after_seconds=config.stale_after_seconds,
+            cold_interval_seconds=config.cold_interval_seconds,
         )
 
     ex_cluster = ex_cassandra_cluster()

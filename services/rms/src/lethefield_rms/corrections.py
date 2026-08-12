@@ -29,6 +29,7 @@ from lethefield_clients import (
     list_experience_events,
     n_now,
     redis_client,
+    redline1_exempt,
 )
 
 from lethefield_rms import ff
@@ -169,6 +170,15 @@ def process_corrections(
     return stats
 
 
+@redline1_exempt(
+    worker="rms-corrections",
+    reason=(
+        "缺省全体时枚举走映射表 list_spaces()（active 集合），--space 可收敛单 space；"
+        "逐 space 独立处理（单 space 图 + 该 space EX keyspace，无跨 space 联合查询）；"
+        "批间节流由调用方节奏承担"
+    ),
+    cadence="按需单轮 CLI（非常驻；常驻调度节奏留待 M15 写入链合并时统一落地）",
+)
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="纠错处理器（M7）：扫 EX 纠错事件，幂等建 supersedes 边 + 异步 −0.5"

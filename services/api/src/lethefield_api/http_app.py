@@ -9,6 +9,7 @@ from typing import Annotated, Protocol
 
 from fastapi import Body, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from lethefield_rms.quota import QuotaExceeded
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 
 from lethefield_api import service
@@ -42,6 +43,17 @@ def create_app(ctx: ApiContext, rate_limiter: RateLimiter | None = None) -> Fast
     @app.exception_handler(ApiError)
     async def _api_error_handler(_request: Request, exc: ApiError) -> JSONResponse:
         return JSONResponse(status_code=exc.http_status, content=exc.body())
+
+    @app.exception_handler(QuotaExceeded)
+    async def _quota_error_handler(_request: Request, exc: QuotaExceeded) -> JSONResponse:
+        """红线 2（M13）：配额拒绝 → 429 rate_limited（message 含 quota_exceeded）。
+
+        当前无路径触发（写入链 M15 才接 API），此处为预接线。
+        """
+        return JSONResponse(
+            status_code=429,
+            content={"error": {"code": str(ErrorCode.RATE_LIMITED), "message": str(exc)}},
+        )
 
     def _claims(request: Request) -> Claims:
         header = request.headers.get("authorization", "")

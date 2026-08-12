@@ -14,6 +14,12 @@ from gremlin_python.driver.client import Client
 
 from lethefield_rms.ff import DEFAULT_CONFIG as _FF_CONFIG
 from lethefield_rms.ff import n_star_horizon
+from lethefield_rms.quota import (
+    DEFAULT_QUOTA_CONFIG,
+    QuotaConfig,
+    QuotaCounters,
+    check_quota,
+)
 from lethefield_rms.schema import EDGE_LABELS
 
 _CREATE_EVENT_SCRIPT = """
@@ -82,6 +88,8 @@ def create_event_node(
     agent_actor_id: str | None = None,
     attrs: dict | None = None,
     n_star_cached: int | None = None,
+    quota: QuotaConfig = DEFAULT_QUOTA_CONFIG,
+    quota_counters: QuotaCounters | None = None,
 ) -> None:
     """创建 event 顶点。agent_actor_id / attrs 为 None 时不落对应属性。
 
@@ -90,7 +98,12 @@ def create_event_node(
     默认必须给出正确视界。tau_ms / n_created / n_star_cached 以字符串绑定传输：
     gremlin_python 把 Python int 一律序列化为 int32，超 2^31 直接客户端报错；
     Groovy 侧 `as long` 兼容字符串。
+
+    红线 2（M13）：写脚本提交前先查顶点配额（先查后写）。quota_counters 为 None
+    时用传入 client 现场构造（writer 无 es，向量计数路径不可用）。
     """
+    counters = quota_counters or QuotaCounters(client, None, quota)
+    check_quota("vertex", counters.vertex_count(gname), quota, space_id=space_id)
     if n_star_cached is None:
         n_star_cached = n_star_horizon(s, n_created, _FF_CONFIG.theta_base)
     _submit_ok(
@@ -112,8 +125,21 @@ def create_event_node(
     )
 
 
-def create_entity_node(client: Client, gname: str, *, entity_key: str, space_id: str) -> None:
-    """创建 entity 顶点（node_type='entity'，node_key 取 'entity:{entity_key}'）。"""
+def create_entity_node(
+    client: Client,
+    gname: str,
+    *,
+    entity_key: str,
+    space_id: str,
+    quota: QuotaConfig = DEFAULT_QUOTA_CONFIG,
+    quota_counters: QuotaCounters | None = None,
+) -> None:
+    """创建 entity 顶点（node_type='entity'，node_key 取 'entity:{entity_key}'）。
+
+    红线 2（M13）：实体顶点同样占顶点配额，先查后写同 create_event_node。
+    """
+    counters = quota_counters or QuotaCounters(client, None, quota)
+    check_quota("vertex", counters.vertex_count(gname), quota, space_id=space_id)
     _submit_ok(
         client,
         _CREATE_ENTITY_SCRIPT,
@@ -134,14 +160,20 @@ def create_edge(
     from_key: str,
     to_key: str,
     label: str,
+    quota: QuotaConfig = DEFAULT_QUOTA_CONFIG,
+    quota_counters: QuotaCounters | None = None,
 ) -> None:
     """建立 from_key → to_key 的边。label 必须在 schema.EDGE_LABELS 内。
 
     temporal 边只由写入链按时间序建立，immutable——任何衰减/sweep 逻辑不得触碰
     （开发文档 §3：时序图不参与任何衰减/剪枝）。
+
+    红线 2（M13）：写脚本提交前先查边配额（先查后写）。
     """
     if label not in EDGE_LABELS:
         raise ValueError(f"未知边标签 {label!r}，必须在 {EDGE_LABELS} 内")
+    counters = quota_counters or QuotaCounters(client, None, quota)
+    check_quota("edge", counters.edge_count(gname), quota, space_id=space_id)
     _submit_ok(
         client,
         _CREATE_EDGE_SCRIPT,

@@ -17,7 +17,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from lethefield_clients import AuthRegistryStore, AuthScope, FeedEvent, FeedKind, FeedSource
+from lethefield_clients import (
+    AuthRegistryStore,
+    AuthScope,
+    FeedEvent,
+    FeedKind,
+    FeedSource,
+    redline1_exempt,
+)
 
 from lethefield_training.worker import FEED_DROPPED_TOTAL
 
@@ -73,6 +80,14 @@ def to_feed_event(event: dict[str, Any]) -> FeedEvent:
     )
 
 
+@redline1_exempt(
+    worker="training-recall-filter",
+    reason=(
+        "只读 es-ops 运维日志管线（非业务存储，无 space 枚举）；逐事件过 CALIBRATION "
+        "授权闸门后转发；at-least-once + checkpoint 游标推进，批间节流 = 轮询间隔"
+    ),
+    cadence="--interval 轮询（默认 5s）",
+)
 def run_once(
     es_ops,
     *,

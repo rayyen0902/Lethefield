@@ -277,6 +277,10 @@ def migrate_space(
             deps.ex_session,
             space_id=space_id,
             target_gname=gname,
+            # M13 红线 3：归档 v_i lookup 走源侧——旧 archived_nodes 在源 Cell，
+            # rms_vectors 文档在源 ES（向量复制在下一步才发生）
+            es=deps.source_es,
+            source_cell_session=deps.source_cell_session,
         )
         t = mark("rms_rebuild", t)
 

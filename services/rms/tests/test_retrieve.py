@@ -220,3 +220,9 @@ class TestStage4Budget:
         entity = ScoredNode("entity:e1", "e1", None, None, 0.0, 0.0, 2)
         (item,) = _stage4_budget([entity], config=RetrieveConfig())
         assert not item.brief and item.s_effective is None and item.relevance == 0.0
+
+    def test_max_returned_nodes_truncates_in_order(self):
+        cfg = RetrieveConfig(token_budget=10_000, max_returned_nodes=2)
+        cands = [self._candidate(f"n{i}", path_score=1.0 - i * 0.01, s_eff=0.9) for i in range(5)]
+        keys = [i.node_key for i in _stage4_budget(cands, config=cfg)]
+        assert keys == ["n0", "n1"]  # 硬上限截断，保持原排序

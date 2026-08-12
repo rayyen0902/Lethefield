@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from lethefield_clients import redline1_exempt
 from lethefield_metrics import counter, gauge, histogram
 from prometheus_client import REGISTRY
 
@@ -171,6 +172,15 @@ def _vector_doc_counts(es_graph, space_ids: list[str]) -> tuple[dict[str, int], 
     return counts, total_bytes
 
 
+@redline1_exempt(
+    worker="metrics-exporter",
+    reason=(
+        "只读 es-ops 运维日志流 + system.size_estimates 系统表 + 控制面映射表元数据 + "
+        "rms_vectors _stats/_count（per-space routing O(1) 计数），不扫业务数据面；"
+        "space/Cell 枚举走映射表 list_space_mappings/list_cells（元数据）"
+    ),
+    cadence="ExporterConfig.poll_interval_seconds 轮询",
+)
 def run_once(deps: ExporterDeps, search_after: list | None = None) -> list | None:
     """单轮：counter 增量折叠 + gauge 重算 + 元数据采集。返回新游标（进程内持有）。
 

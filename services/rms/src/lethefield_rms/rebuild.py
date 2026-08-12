@@ -10,6 +10,10 @@
   （验收不含 s 保真），M14 后切换为读 EX `scoring_result` 元事件（全保真）。
 - `consolidated_at` 时间戳不可复现：重放置重放时刻——**存在性保真、时间戳不保真**
   （固化语义只在"存在即锁定"，时间戳仅审计用途）。
+- 归档快照携带原始向量 v_i（M13 红线 3 定案：embedding 不可重放、重算会漂移，
+  快照即归档后 v_i 的唯一载体）：来源优先旧 archived_nodes 快照里的 v，其次
+  rms_vectors 现存文档（需注入 es 句柄）；两者皆无则 v=None 并 emit
+  `rebuild_vector_missing` 登记缺口。归档节点不回热图、不回写 rms_vectors。
 
 理想化 sweep 语义（确定性来源）：重放假定 sweep 在每个事件推进点都执行——
 连续 sweep 下节点跨 k 个完整忽视区间恰受 k 次惩罚（区间幂等判定天然给出此序列）。
@@ -28,21 +32,28 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from cassandra import InvalidRequest
 from cassandra.cluster import Session
+from elasticsearch import Elasticsearch
 from gremlin_python.driver.client import Client
 from lethefield_clients import (
     cassandra_cluster,
     ensure_archive_table,
+    es_client,
     ex_cassandra_cluster,
     gremlin_client,
+    list_archived,
     list_experience_events,
     list_meta_events,
     write_archive,
 )
 from lethefield_clients.ex_n import ExEvent, MetaEvent
+from lethefield_logschema import LogEvent
+from lethefield_logschema import emit as emit_event
 
 from lethefield_rms import ff, writer
 from lethefield_rms.schema import ensure_graph_schema
+from lethefield_rms.vectors import get_vector
 
 # Java Long 上限（与 ff._LONG_MAX / fs.consolidate.LONG_MAX 同值）：固化节点绝对遗忘视界 = +∞
 LONG_MAX = 2**63 - 1
@@ -131,8 +142,14 @@ def replay_events(
     s_resolver: Callable[[ExEvent], float] = placeholder_s_resolver,
     consolidate_threshold: int = DEFAULT_CONSOLIDATE_THRESHOLD,
     ff_config: ff.FFConfig = ff.DEFAULT_CONFIG,
+    vector_lookup: Callable[[str], list[float] | None] | None = None,
 ) -> ReplayPlan:
-    """纯重放：EX 事件流 → 重建计划。输入 events 按 n 升序（list_experience_events 保证）。"""
+    """纯重放：EX 事件流 → 重建计划。输入 events 按 n 升序（list_experience_events 保证）。
+
+    vector_lookup（M13 红线 3）：node_key → 原始向量 v_i 的注入取数口——保持本函数
+    纯函数性质，IO 取数由执行器段落负责；为 None 或查不到时归档快照 v 置 None，
+    缺口登记在执行层（rebuild_space）。
+    """
     live: dict[str, ReplayedNode] = {}
     order: list[str] = []  # 热图节点 n 序（归档即移除）
     temporal_edges: list[tuple[str, str]] = []
@@ -206,7 +223,12 @@ def replay_events(
             for out_key, in_key in pairs
             if node.node_key in (out_key, in_key) and out_key in live and in_key in live
         ]
-        return {"props": props, "edges": edges}
+        return {
+            "props": props,
+            "edges": edges,
+            # M13 红线 3：快照携带原始向量 v_i（embedding 不可重放，快照即载体）
+            "v": vector_lookup(node.node_key) if vector_lookup is not None else None,
+        }
 
     def sweep_at(n: int) -> None:
         """理想化 sweep（每个事件推进点执行）：忽视 → 固化（先于归档）→ 归档。"""
@@ -389,17 +411,63 @@ def rebuild_space(
     s_resolver: Callable[[ExEvent], float] = placeholder_s_resolver,
     consolidate_threshold: int = DEFAULT_CONSOLIDATE_THRESHOLD,
     ff_config: ff.FFConfig = ff.DEFAULT_CONFIG,
+    es: Elasticsearch | None = None,
+    source_cell_session: Session | None = None,
 ) -> ReplayPlan:
-    """端到端：读 EX → 重放 → 目标图建 schema → 落计划。返回计划供校验比对。"""
+    """端到端：读 EX → 重放 → 目标图建 schema → 落计划。返回计划供校验比对。
+
+    v_i 注入（M13 红线 3）：归档快照向量按优先级取——① 源 keyspace 既有
+    archived_nodes 快照里的 v；② rms_vectors 现存文档（需注入 es 句柄）；
+    两者皆无 → v=None 并 emit rebuild_vector_missing 登记缺口。
+
+    source_cell_session（M13）：来源 ① 的取数 session——跨 Cell 迁移时归档表在
+    **源** Cell 上，cell_session 指向目标侧读不到旧快照；缺省回落 cell_session
+    （原地重建源=目标）。es 同理应注源侧句柄（rms_vectors 文档在源 ES）。
+    """
     events = list_experience_events(ex_session, space_id=space_id)
     metas = list_meta_events(ex_session, space_id=space_id)
+
+    # v_i 来源 ①：源 keyspace 既有归档快照（重建覆盖写前的旧副本）
+    try:
+        source_snapshots = {
+            item["node_key"]: item["snapshot"]
+            for item in list_archived(source_cell_session or cell_session, space_id)
+        }
+    except InvalidRequest:
+        source_snapshots = {}  # 源 keyspace/归档表不存在：无旧快照可取
+
+    def vector_lookup(node_key: str) -> list[float] | None:
+        old = source_snapshots.get(node_key)
+        if old is not None and old.get("v") is not None:
+            return old["v"]
+        # v_i 来源 ②：rms_vectors 现存文档（归档执行前的重建场景）
+        if es is not None:
+            return get_vector(es, space_id=space_id, node_key=node_key)
+        return None
+
     plan = replay_events(
         events,
         metas,
         s_resolver=s_resolver,
         consolidate_threshold=consolidate_threshold,
         ff_config=ff_config,
+        vector_lookup=vector_lookup,
     )
+    # v_i 缺口登记（embedding 不可重放只能登记；归档节点不回热图、不回写 rms_vectors）
+    for node_key, snapshot in plan.archives:
+        if snapshot["v"] is None:
+            emit_event(
+                LogEvent(
+                    service="lethefield-rms",
+                    event_type="rebuild_vector_missing",
+                    space_id=space_id,
+                    payload={
+                        "node_key": node_key,
+                        "message": "归档快照缺 v_i（旧快照与 rms_vectors 皆无），"
+                        "embedding 不可重放，登记缺口",
+                    },
+                )
+            )
     ensure_graph_schema(client, target_gname)
     execute_rebuild(client, cell_session, plan, target_gname=target_gname, space_id=space_id)
     return plan
@@ -421,6 +489,7 @@ def main() -> int:
     cell_session = cell_cluster.connect()
     ex_cluster = ex_cassandra_cluster()
     ex_session = ex_cluster.connect()
+    es = es_client()  # M13：v_i 来源 ②（rms_vectors 现存文档）取数句柄
     try:
         plan = rebuild_space(
             client,
@@ -428,6 +497,7 @@ def main() -> int:
             ex_session,
             space_id=args.space_id,
             target_gname=args.target_gname or args.space_id,
+            es=es,
         )
     finally:
         client.close()

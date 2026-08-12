@@ -169,6 +169,10 @@ services:
 
   redis:
     image: redis:7
+    # M13 红线 3 定案：AOF（appendonly + everysec）是 n 权威值（ex:n:{space}）的
+    # 配套硬要求——纯 RDB 丢窗会让 n 回退（序号重复分配风险，DMS n 一致性巡检兜底）。
+    # 不配 maxmemory-policy：逐出可能误伤权威键 ex:n（豁免键清单见红线汇总核验记录）。
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
       - "6379:6379"
     healthcheck:
