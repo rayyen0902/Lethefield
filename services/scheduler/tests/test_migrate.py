@@ -347,7 +347,7 @@ def _seed_ex(session: _ExFakeSession, ks: str, n_exp: int, n_meta: int) -> None:
     for i in range(n_meta):
         session.execute(
             f"INSERT INTO {ks}.meta_events (node_key) VALUES (%s)",
-            (f"nk-{i}", None, f"e-{i}", "reinforce", 1, None, "actor", "acct"),
+            (f"nk-{i}", None, f"e-{i}", "reinforce", 1, None, "actor", "acct", None),
         )
 
 

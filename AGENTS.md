@@ -2,11 +2,11 @@
 
 ## 项目阶段
 
-M0–M13（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
+M0–M14（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
 FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租户调度器 /
 EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线 / 可观测性埋点 /
-多租户工程红线落地）已完成并验证（M0–M13 CI 全绿）。
-**下一个模块：M14 SS 显著性打分服务**（开发文档 §15）。
+多租户工程红线落地 / SS 显著性打分服务）已完成并验证（M0–M14 CI 全绿）。
+**下一个模块：M15 写入链 worker**（开发文档 §16）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -37,7 +37,9 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   占位参数集中在 `RetrieveConfig`。`rms_vectors` 已加 `content` 文本字段（Stage 2 关键词一路）。
   writer 的 `n_star_cached` 默认自动按 `n_star_horizon` 计算（传 0/不填会让粗筛全灭召回）。
 - M5 接口层定案：`services/api`（lethefield-api）。契约 1/3 已在代码冻结——EX 事件两表
-  （`ex_{space_id}` keyspace：experience_events 经验事件推进 n / meta_events 元事件不推进），
+  （`ex_{space_id}` keyspace：experience_events 经验事件推进 n / meta_events 元事件不推进；
+  **M14 契约 1 首次演进：meta_events 加可空 `details` 列（text/JSON，按 meta_type 分型、
+  schema 单点在 lethefield_rms.schema），演进规则 = 只允许可空加列式兼容演进**），
   JWT claims `account_id/space_id[]/agent_actor_id/scope[]`（HS256 + env LETHEFIELD_JWT_SECRET，
   签发属 M16）；请求体带 `agent_actor_id` 一律 400 actor_spoof（fail-closed）；图名 = space_id；
   错误码 `{error:{code,message}}`（unauthorized/forbidden_scope/forbidden_space/actor_spoof/
@@ -59,8 +61,9 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   （tx 内查 supersedes 边，已存在 → duplicate 零写入——边即幂等标记，无状态表）；新节点按
   `ref_ex=event_id` 反查、旧节点按 `node_key=ref_conflict`，缺失即 pending。reinforce 时间窗合并
   在 ex_ingest（`REINFORCE_MERGE_WINDOW_MS` 占位 60s，同主键 UPDATE 累加 count，不动契约 1 表结构）。
-  `lethefield_rms.rebuild` 从 EX 重放重建：初始 s 走注入 `s_resolver`（默认占位 1.0，M14 切
-  `scoring_result` 元事件——两档验收已入档）；node_key 由 `node_key_of` 单点生成（过渡约定，M15 对齐）；
+  `lethefield_rms.rebuild` 从 EX 重放重建：初始 s 走注入 `s_resolver`（**M14 起默认
+  `ex_scoring_s_resolver` 读 scoring_result details——全保真档**；缺失回退占位 1.0 +
+  emit `rebuild_scoring_missing`；`placeholder_s_resolver` 保留显式回退）；node_key 由 `node_key_of` 单点生成（过渡约定，M15 对齐）；
   忽视/固化/归档理想化 sweep 重推，`neglect_due`/`consolidate_due`/`archive_eligible` **单点在 ff**
   （已从 fs/sweep 迁入，sweep re-export）。重建边只建双端在热图的（归档节点不落图，addEdge 会炸）；
   重建图顶点 space_id = 源 space，与目标图名不同。
@@ -71,7 +74,9 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   `SpaceMapping.space_type` 可选注解——仅产品/运营标注，核心服务禁止引用/分支，
   `scripts/check_space_model.py` 静态巡检强制（含 agent_id 分区键残留扫描，已接 ci.sh）。
   集成测试的 JWT 密钥（LETHEFIELD_JWT_SECRET 是进程级 env）必须在模块 fixture 里设定——
-  import 时设定会被后导入模块覆盖，先执行模块 token 全 401（M8 实测踩坑）。
+  import 时设定会被后导入模块覆盖，先执行模块 token 全 401（M8 实测踩坑）；**token 签发
+  同理须在 fixture 内**——import 时签发的 exp 以导入时刻起算，套件变长后执行窗口拿到
+  过期 token 同样全 401（M14 全量 CI 实测，m5/m8 已改 fixture 内签发）。
 - M9 Cell 架构定案：`services/scheduler`（lethefield-scheduler）。映射表 =
   `lethefield_control` keyspace（cassandra-cell 上专用 keyspace，直写 CQL 不经 JanusGraph；
   spaces/cells 两表），正式实现 `MappingTableControlPlaneStore`（过渡期
@@ -136,8 +141,8 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   configure 后异步批量进 es-ops `lethefield-logs-YYYY.MM.DD`；一次性 CLI 用 sync=True 惰性
   建 shipper 直写；ES 不可达 fail-open）。暴露口：API 自身端口 `/metrics`（不挂业务 scope，
   1.0 内网口径）；worker 进程 `lethefield_metrics.start_metrics_server`（端口约定 fs 9101 /
-  training 9102 / ingest_dms 9103 / exporter 9104，env `LETHEFIELD_METRICS_PORT`，0=不起，
-  --once 不起）。离线聚合 = `ops/metrics_exporter`（只读 es-ops 日志流 + system.size_estimates
+  training 9102 / ingest_dms 9103 / exporter 9104 / ss 9105，env `LETHEFIELD_METRICS_PORT`，
+  0=不起，--once 不起）。离线聚合 = `ops/metrics_exporter`（只读 es-ops 日志流 + system.size_estimates
   + 映射表 + rms_vectors _stats/_count 元数据——红线 1 边界）：留痕线/δ counter 与
   graph_open histogram 从日志流折叠（游标进程内、重启全量重建）；**δ/留痕计数统一走
   日志流聚合通道**（一次性 CLI 进程内 counter 不可 scrape）。`graph_open_duration_seconds`
@@ -179,6 +184,36 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   位置比对、migrate 按 `_evict_graph` 先于 `_drop_graph_storage` 调用点比对——EX scratch
   DROP 不属红线 5 语义；`--runtime` 跑 clock_monitor + check_graph_config，集成测试调起）。
   两个脚本均已接 ci.sh。
+- M14 定案（SS 显著性打分服务 `services/ss`，lethefield-ss；升级确认入档开发文档 §15 +
+  修订记录 19–22 条）：**契约 1 首次演进**——meta_events 加可空 `details` 列（text/JSON，
+  按 meta_type 分型；scoring_result 的六维原始值+合成 s+模型版本+事件引用 schema 单点在
+  `lethefield_rms.schema`；reinforce 置空行为不变；M10 migrate `_META_COLUMNS` 已同步）；
+  元事件纯 INSERT 单点 `ex_n.append_meta_row`（ex_ingest 合并分支委托）。**EX→Pulsar 生产侧**：
+  `services/api/stream_publisher.py` 显式登记单点（Pulsar import 只许此模块，M5 结构性断言
+  按新口径）；`append_experience` 落库确认后发布 `persistent://lethefield/{space}/ex-events`
+  （有限重试 3×0.2s，**失败不阻塞同步返回**——EX 是 SoT，page 事件 `ex_stream_publish_failed`
+  + `lethefield_ex_stream_publish_total{result}`）；M5 红线修订为"同步返回路径不依赖 Pulsar"。
+  信封/topic 名单点 `libs/clients/ex_stream.py`（ExStreamEvent/ScoringResult，版本化
+  fail-closed）。**SS worker**：逐 space consumer（`list_spaces()` 枚举 + 节流刷新——
+  **Pulsar 跨 namespace 正则订阅实测 InvalidTopicName，namespace 段不许通配**）；
+  **死信走应用层**（runtime 按 message_id 计失败次数，超 `max_redeliver_count` → 原文写
+  `ex_events_dlq_topic`（命名单点 `<topic>-ss-scorer-DLQ`）+ ack + page `ss_scoring_dlq`）——
+  **不要用 broker ConsumerDeadLetterPolicy：standalone + pulsar-client 实测
+  redelivery_count 恒 0、死信转移不触发**；失败 nack 不重投到死；**n 连续性自愈**：
+  NTracker 冷启动从 EX 最新 scoring_result 的 n_at_event 播种，缺口 page `ss_n_gap` +
+  按 n 区间从 EX 补偿；EX 回写幂等（已有 scoring_result 不重打分、从 details 重建信封补发下游）；
+  run_once 里失败消息**不计 progressed**（否则毒消息重投把排空轮喂成死循环）。
+  **LLM 客户端**：OpenAI 兼容 HTTP 直连（httpx，`SS_LLM_BASE_URL/API_KEY/MODEL` 从根 `.env`
+  dotenv 单点加载，缺失 fail-closed；key 不进日志/指标/异常）；**降级分级**：缺 1 维 →
+  中性值（`SS_DEGRADE_NEUTRAL` 默认 0.5）+ degraded + 缺失维清单随 details 落 EX +
+  `lethefield_ss_score_degraded_total{dimension}`；不可解析或缺 ≥2 维 → 失败 → DLQ；
+  `SS_DEGRADE_POLICY=neutral_mark|retry` 默认 neutral_mark。权重禁硬编码（`SSConfig.weights`
+  默认均权，`LETHEFIELD_SS_WEIGHTS_JSON` 覆盖）；标定线指标 `lethefield_ss_score_ratio{dimension}`/
+  `lethefield_ss_llm_calls_total{result}`/`lethefield_ss_llm_tokens_total{type}`；端口 9105。
+  M7 重建默认切全保真档（见 M7 行）。样例集 `services/ss/samples/stability_samples.jsonl`，
+  稳定性报告 `deploy/baselines/m14_ss_stability.json`，结论进决策留痕。
+- **pytest 同名测试文件冲突**：tests 目录无 `__init__.py`，两个服务同名 `test_worker.py`
+  会 import file mismatch——新服务测试文件名必须全局唯一（M14 踩坑，改 `test_scoring_worker.py`）。
 - ES 排序不能用 `_id`（fielddata 限制，报 search_phase_execution_exception）——日志游标
   按 timestamp 单字段排序，同毫秒边界重读由 event_id 去重兜底（M12 实测）。
 - 拉新镜像注意：colima VM 的 dockerd 代理指向宿主机 192.168.5.2:7897，若宿主机代理只监听
@@ -231,6 +266,9 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
 | `open http://localhost:9090` / `:3000`（admin/admin） | M12：Prometheus / Grafana（compose 常驻，dashboard 已 provision） |
 | `uv run python scripts/check_space_filter.py` | M13：红线 1 静态扫描（无 space 过滤遍历 / 未登记跨 space 调用 / 入口缺 --space 收敛口） |
 | `uv run python scripts/check_redlines.py [--runtime]` | M13：红线 4/5/6 汇总核验 + Redis 豁免记录（--runtime 需全栈，集成测试调起） |
+| `uv run python -m lethefield_ss worker [--once]` | M14：SS 打分 worker（ex-events consumer → 六维打分 → EX 回写 + scoring-results） |
+| `uv run python -m lethefield_ss smoke` | M14 任务二：真实 LLM 小批量冒烟（读根 .env，端点/模型/六维解析验证） |
+| `uv run python -m lethefield_ss validate --samples F --out R` | M14 任务三：打分稳定性验证（分布/塌缩/成本报告 JSON，结论进决策留痕） |
 | `docker compose --profile cell2 up -d` 后 `uv run pytest tests/integration/test_m10_migration_drill.py` | M10：跨 Cell 迁移演练（按需，不占常驻内存；默认 CI 自动 skip） |
 
 ## 约定

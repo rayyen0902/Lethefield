@@ -95,7 +95,8 @@ _EXPERIENCE_COLUMNS = (
     "n, event_id, content, agent_actor_id, account_id, tau_ms, ref_conflict, created_at"
 )
 _META_COLUMNS = (
-    "node_key, created_at, event_id, meta_type, count, n_at_event, agent_actor_id, account_id"
+    "node_key, created_at, event_id, meta_type, count, n_at_event, agent_actor_id, "
+    "account_id, details"  # details：M14 契约 1 演进（可空加列）
 )
 
 
@@ -119,7 +120,7 @@ def _copy_ex_keyspace(
     for row in metas:
         target.execute(
             f"INSERT INTO {target_ks}.{META_TABLE} ({_META_COLUMNS}) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             tuple(getattr(row, c) for c in _META_COLUMNS.split(", ")),
         )
     return len(rows), len(metas)

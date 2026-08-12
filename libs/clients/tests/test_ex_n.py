@@ -6,6 +6,7 @@ import pytest
 from lethefield_clients.ex_n import (
     EXPERIENCE_TABLE,
     META_TABLE,
+    append_meta_row,
     keyspace_name,
     list_experience_events,
     list_meta_events,
@@ -149,6 +150,7 @@ def test_list_meta_events_filter_by_node_key():
             n_at_event=9,
             agent_actor_id="a",
             account_id="acc",
+            details=None,
         ),
         Row(
             node_key="k1",
@@ -159,6 +161,7 @@ def test_list_meta_events_filter_by_node_key():
             n_at_event=5,
             agent_actor_id="a",
             account_id="acc",
+            details=None,
         ),
     ]
     session = ListFakeSession([rows])
@@ -177,3 +180,65 @@ def test_list_meta_events_full_scan_without_filter():
     query, params = session.calls[0]
     assert "WHERE" not in query
     assert params == ()
+
+
+def test_list_meta_events_maps_details():
+    """M14 契约 1 演进：details 列读出（scoring_result 的 JSON payload）。"""
+    rows = [
+        Row(
+            node_key="k1",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            event_id="m1",
+            meta_type="scoring_result",
+            count=1,
+            n_at_event=5,
+            agent_actor_id=None,
+            account_id=None,
+            details='{"s": 0.7}',
+        )
+    ]
+    session = ListFakeSession([rows])
+    metas = list_meta_events(session, space_id="demo", node_key="k1")
+    assert metas[0].details == '{"s": 0.7}'
+    assert "details" in session.calls[0][0]
+
+
+# ---------------------------------------------------------------- EX 写访问原语（M14）
+
+
+def test_append_meta_row_inserts_without_n():
+    """纯 INSERT 单点：不触碰 Redis（不推进 n），details 透传，返回新 event_id。"""
+    session = ListFakeSession([[]])
+    event_id = append_meta_row(
+        session,
+        space_id="demo",
+        node_key="ev_x",
+        meta_type="scoring_result",
+        n_at_event=7,
+        agent_actor_id="a",
+        account_id="acc",
+        details='{"s": 0.5}',
+    )
+    assert event_id  # uuid 字符串
+    query, params = session.calls[0]
+    assert f"INSERT INTO ex_demo.{META_TABLE}" in query
+    assert "details" in query
+    assert params[0] == "ev_x" and params[3] == "scoring_result"
+    assert params[5] == 7 and params[8] == '{"s": 0.5}'
+
+
+def test_append_meta_row_default_count_and_details_none():
+    """reinforce 等既有类型：details 置空（契约 1 演进后行为不变）。"""
+    session = ListFakeSession([[]])
+    append_meta_row(
+        session,
+        space_id="demo",
+        node_key="ev_x",
+        meta_type="reinforce",
+        n_at_event=1,
+        agent_actor_id="a",
+        account_id="acc",
+    )
+    _, params = session.calls[0]
+    assert params[4] == 1  # count 默认 1
+    assert params[8] is None  # details 置空

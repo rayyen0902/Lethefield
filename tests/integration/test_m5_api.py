@@ -63,12 +63,17 @@ def _token(scopes, space_ids=(SPACE,), actor="claude-code", exp=None, secret=TES
     )
 
 
-FULL_TOKEN = _token(("record", "reinforce", "flag_conflict", "retrieve"))
-DEBUG_TOKEN = _token(("retrieve", "reinforce", "debug"))
+# token 在模块 fixture 内签发（不在 import 时）：import 到本模块执行窗口隔着前面
+# 全部套件，import 时签发的 exp 会在长套件中途过期（M14 全量 CI 实测同类 401）。
+FULL_TOKEN = None
+DEBUG_TOKEN = None
 
 
 @pytest.fixture(scope="module")
 def stack():
+    global FULL_TOKEN, DEBUG_TOKEN
+    FULL_TOKEN = _token(("record", "reinforce", "flag_conflict", "retrieve"))
+    DEBUG_TOKEN = _token(("retrieve", "reinforce", "debug"))
     gremlin = gremlin_client(GREMLIN_URL, GREMLIN_ALIAS)
     ensure_graph_schema(gremlin, SPACE)
     ex_session = ex_cassandra_cluster().connect()
@@ -176,7 +181,8 @@ def _serve(app):
         thread.join(timeout=5)
 
 
-def _post(stack, op, payload, token=FULL_TOKEN):
+def _post(stack, op, payload, token=None):
+    token = token or FULL_TOKEN  # 运行时读全局（fixture 内签发，见上方注释）
     return stack.http.post(
         f"/memory/{op}", json=payload, headers={"Authorization": f"Bearer {token}"}
     )
@@ -324,20 +330,34 @@ def test_reinforce_sync_effect_and_async_meta(stack):
 
 
 def test_reinforce_has_no_consolidation_path():
-    """结构性验收：service 层 import 依赖中不存在 Pulsar/consolidation（零调用的前提是零入口）。"""
+    """结构性验收（M14 红线修订后口径）：
+
+    - consolidation 入口在 service 层全包零 import（reinforce 无慢路径旁路）；
+    - Pulsar import 只允许出现在显式登记的生产侧单点 `stream_publisher`
+      （"同步返回路径不依赖 Pulsar"——发布在 EX ack 之后、失败可容忍）。
+    """
     import ast
-    import inspect as _inspect
+    import pathlib
 
-    import lethefield_api.service as svc
+    import lethefield_api
 
-    tree = ast.parse(_inspect.getsource(svc))
-    modules = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules.add(node.module)
-    assert not any("pulsar" in m or "consolidation" in m for m in modules), modules
+    pkg = pathlib.Path(lethefield_api.__file__).parent
+    offenders_pulsar: dict[str, set[str]] = {}
+    offenders_consolidation: dict[str, set[str]] = {}
+    for path in pkg.glob("*.py"):
+        tree = ast.parse(path.read_text())
+        modules = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules.add(node.module)
+        if any("pulsar" in m for m in modules) and path.stem != "stream_publisher":
+            offenders_pulsar[path.name] = {m for m in modules if "pulsar" in m}
+        if bad := {m for m in modules if "consolidation" in m}:
+            offenders_consolidation[path.name] = bad
+    assert not offenders_pulsar, offenders_pulsar
+    assert not offenders_consolidation, offenders_consolidation
 
 
 # ------------------------------------------- 验收 5：限流中间件挂载点

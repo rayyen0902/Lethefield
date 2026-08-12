@@ -30,3 +30,8 @@ scrape_configs:
   - job_name: lethefield-metrics-exporter
     static_configs:
       - targets: ["host.docker.internal:9104"]
+
+  # services/ss 打分 worker 进程（prometheus_client start_http_server，端口 9105，M14）
+  - job_name: lethefield-ss
+    static_configs:
+      - targets: ["host.docker.internal:9105"]

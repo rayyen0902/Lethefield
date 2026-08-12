@@ -89,3 +89,42 @@ def test_schema_has_no_invalidation_flags():
         "is_invalidated",
         "superseded_by",
     ]
+
+
+# ------------------------------------------- M14：scoring_result details 单点
+
+
+def test_scoring_details_roundtrip():
+    from lethefield_rms.schema import parse_scoring_details, scoring_details_of
+
+    text = scoring_details_of(
+        dims={"er": 0.1, "e": 0.2, "i": 0.3, "g": 0.4, "n": 0.5, "c": 0.6},
+        s=0.35,
+        model_version="deepseek-chat@2026-08",
+        event_id="e1",
+        degraded=True,
+        missing_dims=["er"],
+    )
+    details = parse_scoring_details(text)
+    assert details.dims["er"] == 0.1 and details.s == 0.35
+    assert details.model_version == "deepseek-chat@2026-08"
+    assert details.degraded is True and details.missing_dims == ["er"]
+
+
+def test_scoring_details_fail_closed():
+    import pytest
+    from lethefield_rms.schema import parse_scoring_details, scoring_details_of
+
+    good = {"er": 0.5, "e": 0.5, "i": 0.5, "g": 0.5, "n": 0.5, "c": 0.5}
+    with pytest.raises(ValueError, match="维度键不符"):  # 缺维
+        scoring_details_of(dims={"er": 0.5}, s=0.5, model_version="m", event_id="e")
+    with pytest.raises(ValueError, match="越界"):  # 分值越界
+        scoring_details_of(dims={**good, "er": 1.5}, s=0.5, model_version="m", event_id="e")
+    with pytest.raises(ValueError, match="越界"):  # s 越界
+        scoring_details_of(dims=good, s=-0.1, model_version="m", event_id="e")
+    with pytest.raises(ValueError, match="model_version"):  # 空版本
+        scoring_details_of(dims=good, s=0.5, model_version="", event_id="e")
+    with pytest.raises(ValueError, match="event_id"):  # 空事件引用
+        scoring_details_of(dims=good, s=0.5, model_version="m", event_id="")
+    with pytest.raises(ValueError, match="结构异常"):  # 缺字段
+        parse_scoring_details('{"dims": {}}')

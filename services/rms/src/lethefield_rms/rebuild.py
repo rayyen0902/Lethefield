@@ -6,8 +6,10 @@
   展开）、忽视/固化/归档（理想化 sweep 确定性重推——复用 ff.neglect_due /
   ff.consolidate_due / ff.archive_eligible 单点判定，禁止抄副本）。
 - **不重建**：semantic/causal/entity 边（consolidation 推断产物，EX 无记录，
-  M14/M15 落地后才有来源）；节点初始 `s` 走注入 `s_resolver`——M14 前默认占位常数
-  （验收不含 s 保真），M14 后切换为读 EX `scoring_result` 元事件（全保真）。
+  M14/M15 落地后才有来源）；节点初始 `s` 走注入 `s_resolver`——M14 起默认切换为
+  读 EX `scoring_result` 元事件（全保真档，`ex_scoring_s_resolver`），缺失元事件的
+  事件回退占位常数并 emit `rebuild_scoring_missing` 登记缺口；`placeholder_s_resolver`
+  保留为显式回退（M14 前历史数据/测试）。
 - `consolidated_at` 时间戳不可复现：重放置重放时刻——**存在性保真、时间戳不保真**
   （固化语义只在"存在即锁定"，时间戳仅审计用途）。
 - 归档快照携带原始向量 v_i（M13 红线 3 定案：embedding 不可重放、重算会漂移，
@@ -52,7 +54,11 @@ from lethefield_logschema import LogEvent
 from lethefield_logschema import emit as emit_event
 
 from lethefield_rms import ff, writer
-from lethefield_rms.schema import ensure_graph_schema
+from lethefield_rms.schema import (
+    SCORING_RESULT_META_TYPE,
+    ensure_graph_schema,
+    parse_scoring_details,
+)
 from lethefield_rms.vectors import get_vector
 
 # Java Long 上限（与 ff._LONG_MAX / fs.consolidate.LONG_MAX 同值）：固化节点绝对遗忘视界 = +∞
@@ -74,8 +80,38 @@ def node_key_of(event_id: str) -> str:
 
 
 def placeholder_s_resolver(event: ExEvent) -> float:
-    """默认 s_resolver：占位常数（M14 落地后切换为读 EX scoring_result 元事件）。"""
+    """占位常数 s_resolver（M14 前历史数据回退 / 测试显式注入用；生产默认已切全保真档）。"""
     return PLACEHOLDER_S
+
+
+def ex_scoring_s_resolver(
+    metas: list[MetaEvent],
+    *,
+    on_missing: Callable[[ExEvent], None] | None = None,
+) -> Callable[[ExEvent], float]:
+    """M14 全保真档 s_resolver：从 EX `scoring_result` 元事件 details 读原始合成 s。
+
+    按 node_key 取最新一笔（同节点多次打分取 created_at 最新——重打分友好）；
+    缺失（M14 前历史事件/打分缺口）回退占位常数并回调 on_missing 登记，
+    与 rebuild_vector_missing 同款的"缺口登记不静默"纪律。
+    """
+    latest: dict[str, MetaEvent] = {}
+    for meta in metas:
+        if meta.meta_type != SCORING_RESULT_META_TYPE or meta.details is None:
+            continue
+        prev = latest.get(meta.node_key)
+        if prev is None or meta.created_at > prev.created_at:
+            latest[meta.node_key] = meta
+
+    def resolve(event: ExEvent) -> float:
+        meta = latest.get(node_key_of(event.event_id))
+        if meta is None:
+            if on_missing is not None:
+                on_missing(event)
+            return PLACEHOLDER_S
+        return parse_scoring_details(meta.details).s
+
+    return resolve
 
 
 # ---------------------------------------------------------------- 纯重放模型（不触存储，可单测）
@@ -408,13 +444,18 @@ def rebuild_space(
     *,
     space_id: str,
     target_gname: str,
-    s_resolver: Callable[[ExEvent], float] = placeholder_s_resolver,
+    s_resolver: Callable[[ExEvent], float] | None = None,
     consolidate_threshold: int = DEFAULT_CONSOLIDATE_THRESHOLD,
     ff_config: ff.FFConfig = ff.DEFAULT_CONFIG,
     es: Elasticsearch | None = None,
     source_cell_session: Session | None = None,
 ) -> ReplayPlan:
     """端到端：读 EX → 重放 → 目标图建 schema → 落计划。返回计划供校验比对。
+
+    s_resolver（M14 全保真档默认）：None 时自动切 `ex_scoring_s_resolver`——从
+    scoring_result 元事件读原始 s；缺失事件回退占位常数并 emit
+    `rebuild_scoring_missing` 登记缺口。显式传 `placeholder_s_resolver` 回退
+    M14 前口径（验收不含 s 保真的历史档）。
 
     v_i 注入（M13 红线 3）：归档快照向量按优先级取——① 源 keyspace 既有
     archived_nodes 快照里的 v；② rms_vectors 现存文档（需注入 es 句柄）；
@@ -426,6 +467,24 @@ def rebuild_space(
     """
     events = list_experience_events(ex_session, space_id=space_id)
     metas = list_meta_events(ex_session, space_id=space_id)
+
+    if s_resolver is None:
+        # M14 全保真档：scoring_result 缺失 = 保真缺口，登记不静默
+        def on_missing(event: ExEvent) -> None:
+            emit_event(
+                LogEvent(
+                    service="lethefield-rms",
+                    event_type="rebuild_scoring_missing",
+                    space_id=space_id,
+                    payload={
+                        "node_key": node_key_of(event.event_id),
+                        "n": event.n,
+                        "message": "EX 无 scoring_result 元事件，初始 s 回退占位常数",
+                    },
+                )
+            )
+
+        s_resolver = ex_scoring_s_resolver(metas, on_missing=on_missing)
 
     # v_i 来源 ①：源 keyspace 既有归档快照（重建覆盖写前的旧副本）
     try:

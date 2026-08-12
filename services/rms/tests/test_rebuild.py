@@ -206,3 +206,55 @@ def test_archive_snapshot_without_lookup_v_none():
     plan = replay_events(events, [], s_resolver=lambda e: 0.31, ff_config=_NO_NEGLECT)
     assert plan.archives  # 前提：确实有归档发生
     assert all(snapshot["v"] is None for _, snapshot in plan.archives)
+
+
+# ------------------------------------------- M14：scoring_result s_resolver（全保真档）
+
+
+def _scoring_meta(node_key: str, *, s: float, at: int) -> MetaEvent:
+    from lethefield_rms.schema import scoring_details_of
+
+    return MetaEvent(
+        node_key=node_key,
+        created_at=_BASE + timedelta(seconds=at),
+        event_id=f"m-sc-{node_key}-{at}",
+        meta_type="scoring_result",
+        count=1,
+        n_at_event=None,
+        agent_actor_id=None,
+        account_id=None,
+        details=scoring_details_of(
+            dims={"er": 0.5, "e": 0.5, "i": 0.5, "g": 0.5, "n": 0.5, "c": 0.5},
+            s=s,
+            model_version="m1",
+            event_id=node_key.removeprefix("ev_"),
+        ),
+    )
+
+
+def test_ex_scoring_s_resolver_reads_details():
+    """全保真档：初始 s 从 scoring_result details 解析，不再是占位常数。"""
+    metas = [_scoring_meta(node_key_of("e1"), s=0.7, at=5)]
+    resolver = rebuild.ex_scoring_s_resolver(metas)
+    plan = replay_events([_event(1), _event(2)], metas, s_resolver=resolver)
+    assert _node(plan, 1).s == pytest.approx(0.7)
+    assert _node(plan, 2).s == rebuild.PLACEHOLDER_S  # 无打分元事件 → 占位回退
+
+
+def test_ex_scoring_s_resolver_latest_wins():
+    """同节点多笔打分取 created_at 最新（重打分友好）。"""
+    metas = [
+        _scoring_meta(node_key_of("e1"), s=0.3, at=5),
+        _scoring_meta(node_key_of("e1"), s=0.9, at=9),
+    ]
+    resolver = rebuild.ex_scoring_s_resolver(metas)
+    assert resolver(_event(1)) == pytest.approx(0.9)
+
+
+def test_ex_scoring_s_resolver_missing_callback():
+    """缺失回调登记（不静默）；reinforce 元事件不干扰。"""
+    missing: list[str] = []
+    metas = [_meta(node_key_of("e1"), count=1, n_at_event=1, at=3)]
+    resolver = rebuild.ex_scoring_s_resolver(metas, on_missing=lambda e: missing.append(e.event_id))
+    assert resolver(_event(1)) == rebuild.PLACEHOLDER_S
+    assert missing == ["e1"]

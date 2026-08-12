@@ -19,6 +19,7 @@ dev = [
     "lethefield-metrics-exporter",
     "lethefield-rms",
     "lethefield-scheduler",
+    "lethefield-ss",
     "lethefield-training",
     "gremlinpython>=3.7",
     "requests>=2.31",
@@ -45,6 +46,7 @@ lethefield-metrics = { workspace = true }
 lethefield-metrics-exporter = { workspace = true }
 lethefield-rms = { workspace = true }
 lethefield-scheduler = { workspace = true }
+lethefield-ss = { workspace = true }
 lethefield-training = { workspace = true }
 
 [tool.pytest.ini_options]

@@ -6,8 +6,10 @@
 - record / flag_conflict 只到 EX ack 为止；SS→RMS 异步入链（M14/M15）不在返回路径。
 - FF 内部字段（s_effective、φ_i 计数器等）一律 `debug` scope 才出——四个操作统一适用，
   防"经 reinforce 等写接口旁路探测 FF 状态"。
-- reinforce 不触发 consolidation worker：本模块不依赖 Pulsar/consolidation 任何入口
-  （结构性保证，集成测试断言）。
+- reinforce 不触发 consolidation worker：本模块不依赖 consolidation 任何入口
+  （结构性保证，集成测试断言）。Pulsar 口径（M14 红线修订）：**同步返回路径不依赖
+  Pulsar**——EX→Pulsar producer 显式登记在 `stream_publisher` 单点，发布在 EX ack
+  之后、失败可容忍（page 告警 + 指标，不阻塞返回）。
 
 约定：图名 = space_id（M5 冻结契约不变）；M9 起解析必经映射缓存（MappingCache
 包装 MappingTableControlPlaneStore），未注册 space → 404——消除"绕过映射直连默认
@@ -34,6 +36,7 @@ from lethefield_clients import (
     es_client,
     ex_cassandra_cluster,
     gremlin_client,
+    pulsar_client,
     redis_client,
     space_ref_of,
 )
@@ -50,6 +53,7 @@ from redis import Redis
 from lethefield_api import ex_ingest
 from lethefield_api.auth import Claims, has_debug, require_scope, require_space
 from lethefield_api.errors import ApiError, ErrorCode
+from lethefield_api.stream_publisher import ExStreamPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +91,7 @@ class ApiContext:
     meta_appender: MetaAppender
     mapping_cache: MappingCache
     control_cluster: Cluster | None = None  # 控制面独立连接（故障演练可与数据面隔离）
+    stream_publisher: ExStreamPublisher | None = None  # M14 EX→Pulsar 生产侧（None=不发布）
 
     @classmethod
     def from_env(cls) -> "ApiContext":
@@ -96,6 +101,8 @@ class ApiContext:
         ctx.ex_session = ex_cassandra_cluster().connect()
         ctx.redis = redis_client()
         ctx.meta_appender = _make_background_appender(ctx)
+        # M14：EX→Pulsar 生产侧（落库确认后发布；失败不阻塞同步返回）
+        ctx.stream_publisher = ExStreamPublisher(pulsar_client())
         # 控制面独立 Cluster 连接：调度器/元数据故障面与图/EX 访问隔离（M9 演练前提）
         ctx.control_cluster = cassandra_cluster()
         store = MappingTableControlPlaneStore(ctx.control_cluster.connect())
@@ -175,6 +182,7 @@ def record(
         agent_actor_id=claims.agent_actor_id,  # 盖章字段只认 claim
         account_id=claims.account_id,
         tau_ms=tau_ms,
+        publisher=ctx.stream_publisher,  # M14：EX ack 后发布 ex-events（失败不阻塞返回）
     )
     _RECORD_CONFIRM_DURATION.observe(time.perf_counter() - t0)  # M12：§9.3 确认延迟
     return {"event_id": event_id, "n": n, "space_id": space_id}
@@ -204,6 +212,7 @@ def flag_conflict(
         account_id=claims.account_id,
         tau_ms=tau_ms,
         ref_conflict=ref_conflict,
+        publisher=ctx.stream_publisher,  # M14：EX ack 后发布 ex-events（失败不阻塞返回）
     )
     return {"event_id": event_id, "n": n, "space_id": space_id}
 
@@ -211,7 +220,8 @@ def flag_conflict(
 def reinforce(ctx: ApiContext, claims: Claims, *, space_id: str, node_key: str) -> dict:
     """memory.reinforce：唯一同步直连 RMS 的旁路（+0.2），同时异步补 EX 元事件。
 
-    不经过 consolidation worker（结构性：本模块无 Pulsar/consolidation 依赖）。
+    不经过 consolidation worker（结构性：本模块无 consolidation 依赖；Pulsar 生产侧
+    登记在 stream_publisher 单点，只服务 EX 事件流发布，与 reinforce 旁路无关）。
     """
     require_scope(claims, "reinforce")
     require_space(claims, space_id)

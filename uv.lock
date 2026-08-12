@@ -21,6 +21,7 @@ members = [
     "lethefield-metrics-exporter",
     "lethefield-rms",
     "lethefield-scheduler",
+    "lethefield-ss",
     "lethefield-training",
 ]
 
@@ -749,6 +750,7 @@ dev = [
     { name = "lethefield-metrics-exporter" },
     { name = "lethefield-rms" },
     { name = "lethefield-scheduler" },
+    { name = "lethefield-ss" },
     { name = "lethefield-training" },
     { name = "pytest" },
     { name = "requests" },
@@ -772,6 +774,7 @@ dev = [
     { name = "lethefield-metrics-exporter", editable = "ops/metrics_exporter" },
     { name = "lethefield-rms", editable = "services/rms" },
     { name = "lethefield-scheduler", editable = "services/scheduler" },
+    { name = "lethefield-ss", editable = "services/ss" },
     { name = "lethefield-training", editable = "services/training" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "requests", specifier = ">=2.31" },
@@ -790,6 +793,7 @@ dependencies = [
     { name = "lethefield-metrics" },
     { name = "lethefield-rms" },
     { name = "mcp" },
+    { name = "pulsar-client" },
     { name = "pyjwt" },
     { name = "uvicorn" },
 ]
@@ -803,6 +807,7 @@ requires-dist = [
     { name = "lethefield-metrics", editable = "libs/metrics" },
     { name = "lethefield-rms", editable = "services/rms" },
     { name = "mcp", specifier = ">=1.2,<2" },
+    { name = "pulsar-client", specifier = ">=3.4" },
     { name = "pyjwt", specifier = ">=2.8" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
@@ -1024,6 +1029,33 @@ requires-dist = [
     { name = "lethefield-rms", editable = "services/rms" },
     { name = "pulsar-client", specifier = ">=3.4" },
     { name = "requests", specifier = ">=2.31" },
+]
+
+[[package]]
+name = "lethefield-ss"
+version = "0.1.0"
+source = { editable = "services/ss" }
+dependencies = [
+    { name = "httpx" },
+    { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
+    { name = "lethefield-metrics" },
+    { name = "lethefield-rms" },
+    { name = "prometheus-client" },
+    { name = "pulsar-client" },
+    { name = "python-dotenv" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
+    { name = "lethefield-metrics", editable = "libs/metrics" },
+    { name = "lethefield-rms", editable = "services/rms" },
+    { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "pulsar-client", specifier = ">=3.4" },
+    { name = "python-dotenv", specifier = ">=1.0" },
 ]
 
 [[package]]

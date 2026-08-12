@@ -2,14 +2,21 @@
 
 schema 常量在此单点定义，ensure_schema.groovy 脚本只含逻辑、元素名经绑定传入，
 两侧一致性由 services/rms/tests 与 scripts/check_rms_schema.py 强制。
+
+M14 起本模块同时是 scoring_result details（EX meta_events.details JSON）的
+schema 单点（契约 1 首次演进，v1.2 修订记录第 19 条定案：按 meta_type 分型、
+单点定义）——SS 写、M7 重建读共用。
 """
 
 import argparse
+import json
 import time
+from dataclasses import asdict, dataclass, field
 from importlib import resources
 
 from gremlin_python.driver.client import Client
 from lethefield_clients import gremlin_client
+from lethefield_clients.ex_stream import DIMENSIONS
 from lethefield_logschema import LogEvent, emit
 
 # 顶点属性键 → JanusGraph 类型简单名（对齐开发文档 §3 节点表，共 17 个，M6 增 consolidated_at）
@@ -53,6 +60,84 @@ FORBIDDEN_FLAG_TOKENS: tuple[str, ...] = (
 def find_invalidation_flags(names: list[str]) -> list[str]:
     """扫描命名中的失效标志禁项（子串匹配，大小写不敏感），返回违规名列表。"""
     return [name for name in names if any(token in name.lower() for token in FORBIDDEN_FLAG_TOKENS)]
+
+
+# ---------------------------------------- scoring_result details（M14，契约 1 首次演进）
+
+# meta_events.details 的 JSON schema 按 meta_type 分型、单点定义在此（契约 2 schema
+# 单点，v1.2 修订记录第 19 条定案）：SS 写、M7 重建读共用。reinforce 等既有类型
+# details 置空、无 schema。
+SCORING_RESULT_META_TYPE = "scoring_result"
+
+
+@dataclass(frozen=True)
+class ScoringDetails:
+    """scoring_result 元事件 details 的结构化映射（六维原始值与合成 s 分开存储）。
+
+    权重标定后只需调整合成逻辑、无需重打分——原始六维是重打分/重合成的输入。
+    degraded/missing_dims：M14 降级规则定案（缺 1 维置中性值并标记，可识别可重打分）。
+    """
+
+    dims: dict[str, float]  # 六维原始值，键 = ex_stream.DIMENSIONS
+    s: float  # 权重合成初值
+    model_version: str  # 打分模型版本（换模型 = 换版本号）
+    event_id: str  # 事件引用（被打分的 EX 经验事件）
+    degraded: bool = False
+    missing_dims: list[str] = field(default_factory=list)
+
+
+def scoring_details_of(
+    *,
+    dims: dict[str, float],
+    s: float,
+    model_version: str,
+    event_id: str,
+    degraded: bool = False,
+    missing_dims: list[str] | None = None,
+) -> str:
+    """构造 scoring_result details JSON（写字段单点；入参先经同款校验）。"""
+    details = ScoringDetails(
+        dims=dims,
+        s=s,
+        model_version=model_version,
+        event_id=event_id,
+        degraded=degraded,
+        missing_dims=list(missing_dims or []),
+    )
+    _validate_scoring_details(details)
+    return json.dumps(asdict(details), ensure_ascii=False, sort_keys=True)
+
+
+def parse_scoring_details(text: str) -> ScoringDetails:
+    """解析 scoring_result details JSON；缺字段/维度异常/越界抛 ValueError（fail-closed）。"""
+    obj = json.loads(text)
+    try:
+        details = ScoringDetails(
+            dims={k: float(v) for k, v in obj["dims"].items()},
+            s=float(obj["s"]),
+            model_version=obj["model_version"],
+            event_id=obj["event_id"],
+            degraded=bool(obj.get("degraded", False)),
+            missing_dims=list(obj.get("missing_dims") or []),
+        )
+    except (KeyError, TypeError, AttributeError) as e:
+        raise ValueError(f"scoring_result details 结构异常：{text!r}") from e
+    _validate_scoring_details(details)
+    return details
+
+
+def _validate_scoring_details(details: ScoringDetails) -> None:
+    if set(details.dims) != set(DIMENSIONS):
+        raise ValueError(f"维度键不符：{sorted(details.dims)!r}（期望 {sorted(DIMENSIONS)}）")
+    for key, value in details.dims.items():
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"维度 {key} 分值越界 [0,1]：{value!r}")
+    if not 0.0 <= details.s <= 1.0:
+        raise ValueError(f"合成 s 越界 [0,1]：{details.s!r}")
+    if not details.model_version:
+        raise ValueError("model_version 为空（换模型 = 换版本号，禁止空版本）")
+    if not details.event_id:
+        raise ValueError("event_id 为空（scoring_result 必须携带事件引用）")
 
 
 # (索引名, 属性键名, 是否唯一)；默认 multiplicity，边不加约束

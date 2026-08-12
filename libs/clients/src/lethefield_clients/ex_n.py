@@ -12,8 +12,14 @@ EX keyspace 命名约定与 Redis 键约定必须收敛到本模块单点。
 
 M7 起本模块同时是 EX 读访问层（ExEvent/MetaEvent + list_*）：消费方
 （corrections/rebuild 等）经此读 EX，不裸写 CQL——与 archive.py 同规约。
+
+契约 1 首次演进（M14，v1.2 修订记录第 19 条定案）：`meta_events` 加可空
+`details` 列（text/JSON，按 meta_type 分型、schema 单点在 lethefield_rms.schema），
+承载 scoring_result 六维原始值；reinforce 等既有类型置空、行为不变。契约演进
+规则自此明确：只允许"可空加列"式兼容演进；改语义/改键/改摄入路径视同契约修改。
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -68,7 +74,10 @@ def ensure_ex_keyspace_named(session: Session, ks: str) -> None:
         )
         """
     )
-    # 元事件：按 node_key 分区（M7 合并器按节点查窗口内 reinforce），不持有 n
+    # 元事件：按 node_key 分区（M7 合并器按节点查窗口内 reinforce），不持有 n。
+    # details（M14 契约 1 首次演进）：可空 JSON payload，按 meta_type 分型——
+    # scoring_result 存六维原始值 + 合成 s + 模型版本 + 事件引用；reinforce 置空。
+    # CREATE TABLE IF NOT EXISTS 不改既有表，dev 卷 make reset 后生效。
     session.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {ks}.{META_TABLE} (
@@ -80,6 +89,7 @@ def ensure_ex_keyspace_named(session: Session, ks: str) -> None:
             n_at_event bigint,
             agent_actor_id text,
             account_id text,
+            details text,
             PRIMARY KEY ((node_key), created_at, event_id)
         )
         """
@@ -150,7 +160,11 @@ class ExEvent:
 
 @dataclass(frozen=True)
 class MetaEvent:
-    """EX 元事件行（reinforce 等，不推进 n；count 为时间窗合并的累计值）。"""
+    """EX 元事件行（reinforce 等，不推进 n；count 为时间窗合并的累计值）。
+
+    details（M14 契约 1 演进）：可空 JSON payload，按 meta_type 分型
+    （scoring_result 的 schema 单点在 lethefield_rms.schema）；reinforce 为 None。
+    """
 
     node_key: str
     created_at: datetime
@@ -160,6 +174,7 @@ class MetaEvent:
     n_at_event: int | None
     agent_actor_id: str | None
     account_id: str | None
+    details: str | None = None
 
 
 def list_experience_events(session: Session, *, space_id: str) -> list[ExEvent]:
@@ -192,17 +207,17 @@ def list_meta_events(
 ) -> list[MetaEvent]:
     """读回元事件（可按 node_key 过滤），按 (node_key, created_at) 升序。"""
     ks = keyspace_name(space_id)
+    columns = (
+        "node_key, created_at, event_id, meta_type, count, n_at_event, "
+        "agent_actor_id, account_id, details"
+    )
     if node_key is not None:
         rows = session.execute(
-            f"SELECT node_key, created_at, event_id, meta_type, count, n_at_event, "
-            f"agent_actor_id, account_id FROM {ks}.{META_TABLE} WHERE node_key = %s",
+            f"SELECT {columns} FROM {ks}.{META_TABLE} WHERE node_key = %s",
             (node_key,),
         ).all()
     else:
-        rows = session.execute(
-            f"SELECT node_key, created_at, event_id, meta_type, count, n_at_event, "
-            f"agent_actor_id, account_id FROM {ks}.{META_TABLE}"
-        ).all()
+        rows = session.execute(f"SELECT {columns} FROM {ks}.{META_TABLE}").all()
     return sorted(
         (
             MetaEvent(
@@ -214,8 +229,50 @@ def list_meta_events(
                 n_at_event=row.n_at_event,
                 agent_actor_id=row.agent_actor_id,
                 account_id=row.account_id,
+                details=row.details,
             )
             for row in rows
         ),
         key=lambda e: (e.node_key, e.created_at),
     )
+
+
+# ---------------------------------------------------------------- EX 写访问原语（M14）
+
+
+def append_meta_row(
+    session: Session,
+    *,
+    space_id: str,
+    node_key: str,
+    meta_type: str,
+    n_at_event: int | None,
+    agent_actor_id: str | None,
+    account_id: str | None,
+    count: int = 1,
+    details: str | None = None,
+) -> str:
+    """追加一笔元事件（纯 INSERT，不分配 n）——EX 元事件写入的单点原语。
+
+    时间窗合并不在本层：ex_ingest.append_meta 的 reinforce 合并逻辑自行查窗口
+    后走 UPDATE；本原语服务"每笔精确"的元事件（M14 scoring_result 等）。
+    """
+    ks = keyspace_name(space_id)
+    event_id = uuid.uuid4()
+    session.execute(
+        f"INSERT INTO {ks}.{META_TABLE} "
+        "(node_key, created_at, event_id, meta_type, count, n_at_event, "
+        "agent_actor_id, account_id, details) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            node_key,
+            datetime.now(UTC),
+            event_id,
+            meta_type,
+            count,
+            n_at_event,
+            agent_actor_id,
+            account_id,
+            details,
+        ),
+    )
+    return str(event_id)

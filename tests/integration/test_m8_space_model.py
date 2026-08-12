@@ -65,13 +65,18 @@ def _token(scopes, space_ids=(SPACE,), actor="claude-code", account="acct-m8"):
     )
 
 
-# 同一 space 的两个写入者身份（开发者场景：Claude Code / Codex 同空间协作）
-TOKEN_A = _token(("record", "retrieve"), actor="claude-code")
-TOKEN_B = _token(("record", "retrieve"), actor="codex")
+# 同一 space 的两个写入者身份（开发者场景：Claude Code / Codex 同空间协作）。
+# token 在模块 fixture 内签发（不在 import 时）：import 到本模块执行窗口可能隔着
+# 前面全部套件，import 时签发的 exp 会在长套件中途过期（M14 全量 CI 实测 401）。
+TOKEN_A = None
+TOKEN_B = None
 
 
 @pytest.fixture(scope="module")
 def stack():
+    global TOKEN_A, TOKEN_B
+    TOKEN_A = _token(("record", "retrieve"), actor="claude-code")
+    TOKEN_B = _token(("record", "retrieve"), actor="codex")
     os.environ["LETHEFIELD_JWT_SECRET"] = TEST_SECRET  # 见文件头注释：须在本模块执行窗口内设定
     gremlin = gremlin_client(GREMLIN_URL, GREMLIN_ALIAS)
     ensure_graph_schema(gremlin, SPACE)
