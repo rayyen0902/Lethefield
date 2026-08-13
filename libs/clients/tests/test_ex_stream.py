@@ -5,7 +5,9 @@ from lethefield_clients.ex_stream import (
     DIMENSIONS,
     ExStreamEvent,
     ScoringResult,
+    ex_events_dlq_topic,
     ex_events_topic,
+    scoring_results_dlq_topic,
     scoring_results_topic,
     space_id_of_topic,
 )
@@ -14,6 +16,15 @@ from lethefield_clients.ex_stream import (
 def test_topic_naming():
     assert ex_events_topic("demo") == "persistent://lethefield/demo/ex-events"
     assert scoring_results_topic("demo") == "persistent://lethefield/demo/scoring-results"
+
+
+def test_dlq_topic_naming():
+    """应用层死信命名同款 <topic>-<subscription>-DLQ（M14 ex-events / M15 scoring-results）。"""
+    assert ex_events_dlq_topic("demo") == "persistent://lethefield/demo/ex-events-ss-scorer-DLQ"
+    assert (
+        scoring_results_dlq_topic("demo")
+        == "persistent://lethefield/demo/scoring-results-rms-writer-DLQ"
+    )
 
 
 def test_topic_naming_fail_closed():

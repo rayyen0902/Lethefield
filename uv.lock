@@ -16,6 +16,7 @@ members = [
     "lethefield-decision-log",
     "lethefield-fs",
     "lethefield-ingest-dms",
+    "lethefield-is",
     "lethefield-logschema",
     "lethefield-metrics",
     "lethefield-metrics-exporter",
@@ -23,6 +24,7 @@ members = [
     "lethefield-scheduler",
     "lethefield-ss",
     "lethefield-training",
+    "lethefield-writer",
 ]
 
 [[package]]
@@ -752,6 +754,7 @@ dev = [
     { name = "lethefield-scheduler" },
     { name = "lethefield-ss" },
     { name = "lethefield-training" },
+    { name = "lethefield-writer" },
     { name = "pytest" },
     { name = "requests" },
     { name = "ruff" },
@@ -776,6 +779,7 @@ dev = [
     { name = "lethefield-scheduler", editable = "services/scheduler" },
     { name = "lethefield-ss", editable = "services/ss" },
     { name = "lethefield-training", editable = "services/training" },
+    { name = "lethefield-writer", editable = "services/writer" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "requests", specifier = ">=2.31" },
     { name = "ruff", specifier = ">=0.6" },
@@ -937,6 +941,25 @@ requires-dist = [
 ]
 
 [[package]]
+name = "lethefield-is"
+version = "0.1.0"
+source = { editable = "services/is" }
+dependencies = [
+    { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
+    { name = "lethefield-scheduler" },
+    { name = "pyjwt" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
+    { name = "lethefield-scheduler", editable = "services/scheduler" },
+    { name = "pyjwt", specifier = ">=2.8" },
+]
+
+[[package]]
 name = "lethefield-logschema"
 version = "0.1.0"
 source = { editable = "libs/logschema" }
@@ -1077,6 +1100,33 @@ requires-dist = [
     { name = "lethefield-metrics", editable = "libs/metrics" },
     { name = "prometheus-client", specifier = ">=0.20" },
     { name = "pulsar-client", specifier = ">=3.4" },
+]
+
+[[package]]
+name = "lethefield-writer"
+version = "0.1.0"
+source = { editable = "services/writer" }
+dependencies = [
+    { name = "httpx" },
+    { name = "lethefield-clients" },
+    { name = "lethefield-logschema" },
+    { name = "lethefield-metrics" },
+    { name = "lethefield-rms" },
+    { name = "prometheus-client" },
+    { name = "pulsar-client" },
+    { name = "python-dotenv" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
+    { name = "lethefield-metrics", editable = "libs/metrics" },
+    { name = "lethefield-rms", editable = "services/rms" },
+    { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "pulsar-client", specifier = ">=3.4" },
+    { name = "python-dotenv", specifier = ">=1.0" },
 ]
 
 [[package]]

@@ -177,29 +177,61 @@ class MetaEvent:
     details: str | None = None
 
 
+_EXPERIENCE_COLUMNS = (
+    "n, event_id, content, agent_actor_id, account_id, tau_ms, ref_conflict, created_at"
+)
+
+
+def _experience_row(row) -> ExEvent:
+    return ExEvent(
+        n=row.n,
+        event_id=str(row.event_id),
+        content=row.content,
+        agent_actor_id=row.agent_actor_id,
+        account_id=row.account_id,
+        tau_ms=row.tau_ms,
+        ref_conflict=row.ref_conflict,
+        created_at=row.created_at,
+    )
+
+
 def list_experience_events(session: Session, *, space_id: str) -> list[ExEvent]:
     """读回该 space 全部经验事件（按 n 升序——重放顺序即 n 序）。"""
     ks = keyspace_name(space_id)
-    rows = session.execute(
-        f"SELECT n, event_id, content, agent_actor_id, account_id, tau_ms, ref_conflict, "
-        f"created_at FROM {ks}.{EXPERIENCE_TABLE}"
-    ).all()
-    return sorted(
-        (
-            ExEvent(
-                n=row.n,
-                event_id=str(row.event_id),
-                content=row.content,
-                agent_actor_id=row.agent_actor_id,
-                account_id=row.account_id,
-                tau_ms=row.tau_ms,
-                ref_conflict=row.ref_conflict,
-                created_at=row.created_at,
-            )
-            for row in rows
-        ),
-        key=lambda e: e.n,
-    )
+    rows = session.execute(f"SELECT {_EXPERIENCE_COLUMNS} FROM {ks}.{EXPERIENCE_TABLE}").all()
+    return sorted((_experience_row(row) for row in rows), key=lambda e: e.n)
+
+
+def get_experience_event(session: Session, *, space_id: str, n: int) -> ExEvent | None:
+    """按主键点查单条经验事件；不存在返回 None。
+
+    M15 写入链的反查取数口（修订记录第 23 条①）：ScoringResult 信封只作触发，
+    c_i/τ_i/A_i 以 EX 为准——A_i 取自此行的 agent_actor_id 列（摄入层按 JWT
+    claim 盖章，禁从事件体文本读）。
+    """
+    ks = keyspace_name(space_id)
+    row = session.execute(
+        f"SELECT {_EXPERIENCE_COLUMNS} FROM {ks}.{EXPERIENCE_TABLE} WHERE n = %s",
+        (n,),
+    ).one()
+    return None if row is None else _experience_row(row)
+
+
+def list_experience_events_range(
+    session: Session, *, space_id: str, n_from: int, n_to: int
+) -> list[ExEvent]:
+    """按 n 闭区间读经验事件（按 n 升序）——M15 n 缺口补偿专用。
+
+    n 是单行主键（partition key，无聚簇列），CQL 不支持其上的范围谓词——
+    逐 n 主键点查实现（缺口区间常态很小；点查无全表扫，也不触发
+    ALLOW FILTERING）。
+    """
+    events = []
+    for n in range(n_from, n_to + 1):
+        event = get_experience_event(session, space_id=space_id, n=n)
+        if event is not None:
+            events.append(event)
+    return events
 
 
 def list_meta_events(

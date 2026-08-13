@@ -21,6 +21,7 @@ dev = [
     "lethefield-scheduler",
     "lethefield-ss",
     "lethefield-training",
+    "lethefield-writer",
     "gremlinpython>=3.7",
     "requests>=2.31",
     "ruff>=0.6",
@@ -48,6 +49,7 @@ lethefield-rms = { workspace = true }
 lethefield-scheduler = { workspace = true }
 lethefield-ss = { workspace = true }
 lethefield-training = { workspace = true }
+lethefield-writer = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["libs", "ops", "services"]

@@ -7,8 +7,10 @@ from lethefield_clients.ex_n import (
     EXPERIENCE_TABLE,
     META_TABLE,
     append_meta_row,
+    get_experience_event,
     keyspace_name,
     list_experience_events,
+    list_experience_events_range,
     list_meta_events,
     n_key,
     n_now,
@@ -93,6 +95,17 @@ class Row:
         self.__dict__.update(kwargs)
 
 
+class _Result:
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    def all(self) -> list:
+        return self._rows
+
+    def one(self):
+        return self._rows[0] if self._rows else None
+
+
 class ListFakeSession:
     """记录 CQL 与参数，按调用序返回预设行集。"""
 
@@ -103,7 +116,7 @@ class ListFakeSession:
     def execute(self, query: str, params: tuple = ()):
         self.calls.append((query, params))
         rows = self.result_sets.pop(0) if self.result_sets else []
-        return type("R", (), {"all": staticmethod(lambda: rows)})()
+        return _Result(rows)
 
 
 def test_list_experience_events_sorted_by_n():
@@ -201,6 +214,61 @@ def test_list_meta_events_maps_details():
     metas = list_meta_events(session, space_id="demo", node_key="k1")
     assert metas[0].details == '{"s": 0.7}'
     assert "details" in session.calls[0][0]
+
+
+# ---------------------------------------------------------------- EX 点查 / 区间查（M15）
+
+
+def test_get_experience_event_hit():
+    row = Row(
+        n=7,
+        event_id="e7",
+        content="c7",
+        agent_actor_id="actor1",
+        account_id="acc",
+        tau_ms=700,
+        ref_conflict=None,
+        created_at=datetime(2026, 1, 7, tzinfo=UTC),
+    )
+    session = ListFakeSession([[row]])
+    event = get_experience_event(session, space_id="demo", n=7)
+    assert event is not None
+    assert event.n == 7 and event.event_id == "e7"
+    assert event.agent_actor_id == "actor1"  # A_i 可信盖章列
+    query, params = session.calls[0]
+    assert f"FROM ex_demo.{EXPERIENCE_TABLE}" in query
+    assert "WHERE n = %s" in query
+    assert params == (7,)
+
+
+def test_get_experience_event_miss():
+    session = ListFakeSession([[]])
+    assert get_experience_event(session, space_id="demo", n=9) is None
+
+
+def test_list_experience_events_range():
+    """闭区间读取 = 逐 n 主键点查（n 是 partition key，CQL 无范围谓词），缺号跳过。"""
+
+    def row(n):
+        return Row(
+            n=n,
+            event_id=f"e{n}",
+            content=f"c{n}",
+            agent_actor_id=None,
+            account_id=None,
+            tau_ms=None,
+            ref_conflict=None,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+    # n=2 命中、n=3 缺失、n=4 命中
+    session = ListFakeSession([[row(2)], [], [row(4)]])
+    events = list_experience_events_range(session, space_id="demo", n_from=2, n_to=4)
+    assert [e.n for e in events] == [2, 4]
+    assert len(session.calls) == 3  # 逐 n 点查
+    for i, (query, params) in enumerate(session.calls):
+        assert "WHERE n = %s" in query
+        assert params == (i + 2,)
 
 
 # ---------------------------------------------------------------- EX 写访问原语（M14）

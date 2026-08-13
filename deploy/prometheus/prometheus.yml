@@ -35,3 +35,8 @@ scrape_configs:
   - job_name: lethefield-ss
     static_configs:
       - targets: ["host.docker.internal:9105"]
+
+  # services/writer 写入链 worker 进程（prometheus_client start_http_server，端口 9106，M15）
+  - job_name: lethefield-writer
+    static_configs:
+      - targets: ["host.docker.internal:9106"]

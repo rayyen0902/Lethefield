@@ -75,7 +75,8 @@ _CONSOLIDATED_SENTINEL = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def node_key_of(event_id: str) -> str:
-    """重建节点键生成单点（过渡约定，M15 冻结 node_key 规则后对齐切换）。"""
+    """节点键生成单点（M15 冻结定案，v1.2 修订记录第 23 条②：`ev_{event_id}`，
+    SS 打分信封 / 写入链建点 / EX 重放重建三处对齐共用本规则）。"""
     return f"ev_{event_id}"
 
 

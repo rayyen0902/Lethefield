@@ -53,6 +53,15 @@ def ex_events_dlq_topic(space_id: str) -> str:
     return f"{ex_events_topic(space_id)}-{EX_EVENTS_SUBSCRIPTION}-DLQ"
 
 
+def scoring_results_dlq_topic(space_id: str) -> str:
+    """scoring-results 死信 topic 全限定名（M15 写入链应用层死信单点）。
+
+    命名同款 `<topic>-<subscription>-DLQ`；死信转移同样由 writer worker 应用层
+    实现（broker 侧策略在本栈不生效，见 ex_events_dlq_topic 注释）。
+    """
+    return f"{scoring_results_topic(space_id)}-{SCORING_RESULTS_SUBSCRIPTION}-DLQ"
+
+
 def space_id_of_topic(topic: str) -> str:
     """从 topic 全限定名解析 space_id（namespace 段）；形式不符抛 ValueError。"""
     parts = topic.split("/")

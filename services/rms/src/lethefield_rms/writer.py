@@ -67,6 +67,26 @@ t.tx().commit()
 'ok'
 """
 
+_VERTEX_EXISTS_SCRIPT = """
+def t = ConfiguredGraphFactory.open(gname).traversal()
+t.V().has('space_id', spaceId).has('node_key', nodeKey).hasNext()
+"""
+
+_LATEST_EVENT_SCRIPT = """
+def t = ConfiguredGraphFactory.open(gname).traversal()
+def q = t.V().has('space_id', spaceId).has('node_type', 'event')
+if (beforeN != null) { q = q.has('n_created', lt(beforeN as long)) }
+q.order().by('n_created', desc).limit(1)
+    .project('node_key', 'n_created').by('node_key').by('n_created')
+    .toList()
+"""
+
+_TEMPORAL_EDGE_EXISTS_SCRIPT = """
+def t = ConfiguredGraphFactory.open(gname).traversal()
+t.V().has('space_id', spaceId).has('node_key', fromKey)
+    .outE('temporal').inV().has('node_key', toKey).hasNext()
+"""
+
 
 def _submit_ok(client: Client, script: str, bindings: dict) -> None:
     result = client.submit(script, bindings).all().result()
@@ -185,3 +205,69 @@ def create_edge(
             "edgeLabel": label,
         },
     )
+
+
+# ---------------------------------------------------------------- 查询原语（M15 写入链幂等分解）
+
+
+def vertex_exists(client: Client, gname: str, *, space_id: str, node_key: str) -> bool:
+    """顶点存在性预检（M15 幂等三分解之顶点项：重复投递不重复建点）。"""
+    result = (
+        client.submit(
+            _VERTEX_EXISTS_SCRIPT,
+            {"gname": gname, "spaceId": space_id, "nodeKey": node_key},
+        )
+        .all()
+        .result()
+    )
+    return bool(result and result[0])
+
+
+def latest_event_node(
+    client: Client, gname: str, *, space_id: str, before_n: int | None = None
+) -> tuple[str, int] | None:
+    """图内 n_created 最大的 event 节点，返回 (node_key, n_created)；空图返回 None。
+
+    M15 定案（v1.2 修订记录第 23 条③）：时序边前序 = 图内现存节点中
+    n_created < n 的最大者（before_n 给定时的严格小于语义）；归档缺口不跨接，
+    理想链由 M7 重放修复。before_n=None 用于写入链 NTracker 冷启动播种。
+    n_created 无索引——per-space 图内扫描（1.0 规模可接受，标定归 §20）。
+    before_n 以字符串绑定传输（gremlin_python int32 序列化限制，Groovy `as long`）。
+    """
+    result = (
+        client.submit(
+            _LATEST_EVENT_SCRIPT,
+            {
+                "gname": gname,
+                "spaceId": space_id,
+                "beforeN": None if before_n is None else str(before_n),
+            },
+        )
+        .all()
+        .result()
+    )
+    # 服务端按元素逐个流回（非嵌套列表）：result 即 project map 的列表
+    if not result:
+        return None
+    return result[0]["node_key"], int(result[0]["n_created"])
+
+
+def temporal_edge_exists(
+    client: Client, gname: str, *, space_id: str, from_key: str, to_key: str
+) -> bool:
+    """from_key → to_key 的 temporal 边存在性预检（M15 幂等三分解之边项：
+    重复投递不产生重复时序边）。"""
+    result = (
+        client.submit(
+            _TEMPORAL_EDGE_EXISTS_SCRIPT,
+            {
+                "gname": gname,
+                "spaceId": space_id,
+                "fromKey": from_key,
+                "toKey": to_key,
+            },
+        )
+        .all()
+        .result()
+    )
+    return bool(result and result[0])
