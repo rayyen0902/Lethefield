@@ -1,26 +1,33 @@
-"""契约 3 验证侧：JWT claim 解出与 scope/space/debug 判定（签发与吊销属 M16）。
+"""契约 3 验证侧：JWT claim 解出与 scope/space/debug/吊销判定（签发在 M16 IS 侧）。
 
-claim 结构（契约 3）：`account_id / space_id[] / agent_actor_id / scope[]`；
-scope 取值 `record | reinforce | flag_conflict | retrieve | debug`。
+claim 结构（契约 3 + v1.2 修订记录第 24 条① 首次演进）：
+`account_id / space_id[] / agent_actor_id / scope[]` + 标准注册 claim
+`jti/exp/iat`（只加不改）。scope 白名单单点在 `lethefield_clients.credentials`
+（本模块同源引用，禁双拷贝）。
 
 纪律：
 - `agent_actor_id` 只从凭证 claim 解出——请求体携带该字段一律拒绝（fail-closed，
   不静默忽略：静默会让调用方误以为声明生效，与 Dead Man's Switch 哲学同源）。
-- `debug` scope 是权限开关，绑凭证不绑请求参数；C 端凭证不授予（M16 签发侧落实）。
+- `debug` scope 是权限开关，绑凭证不绑请求参数；C 端凭证不授予（M16 签发侧闸门
+  已落实：非 internal 渠道拒签）。
+- 吊销检查（M16）：token 带 `jti` 且提供了 `is_revoked` checker → 逐请求查吊销
+  列表；无 `jti` 的旧 dev token 跳过（向后兼容）。checker 异常不捕获（fail-closed
+  传播为 500，不静默放行）。
 """
 
-import os
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import jwt
+from lethefield_clients.credentials import (
+    CREDENTIAL_SCOPES,
+    DEBUG_SCOPE,
+    jwt_secret,
+)
 
 from lethefield_api.errors import ApiError, ErrorCode
 
-SCOPES: frozenset[str] = frozenset({"record", "reinforce", "flag_conflict", "retrieve", "debug"})
-DEBUG_SCOPE = "debug"
-
-# dev 默认密钥仅供本地/CI（M16 落地前）；生产部署必须经 LETHEFIELD_JWT_SECRET 注入
-_DEFAULT_SECRET = "lethefield-dev-insecure-secret"
+SCOPES: frozenset[str] = CREDENTIAL_SCOPES  # 单点委托（修订记录 24④）
 
 
 @dataclass(frozen=True)
@@ -32,17 +39,24 @@ class Claims:
 
 
 def _secret() -> str:
-    return os.environ.get("LETHEFIELD_JWT_SECRET", _DEFAULT_SECRET)
+    return jwt_secret()
 
 
-def verify_token(token: str) -> Claims:
-    """验签 + 解出 claims；任何无效形态都映射为 401 unauthorized。"""
+def verify_token(
+    token: str,
+    is_revoked: Callable[[str], bool] | None = None,
+) -> Claims:
+    """验签 + 吊销检查 + 解出 claims；任何无效形态都映射为 401 unauthorized。"""
     try:
         payload = jwt.decode(token, _secret(), algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
         raise ApiError(ErrorCode.UNAUTHORIZED, "token 已过期") from None
     except jwt.InvalidTokenError as exc:
         raise ApiError(ErrorCode.UNAUTHORIZED, f"token 无效：{exc}") from None
+
+    jti = payload.get("jti")
+    if jti is not None and is_revoked is not None and is_revoked(jti):
+        raise ApiError(ErrorCode.UNAUTHORIZED, "凭证已吊销")
 
     missing = {"account_id", "space_id", "agent_actor_id", "scope"} - payload.keys()
     if missing:

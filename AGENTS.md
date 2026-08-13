@@ -2,11 +2,12 @@
 
 ## 项目阶段
 
-M0–M14（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
+M0–M16（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
 FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租户调度器 /
 EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线 / 可观测性埋点 /
-多租户工程红线落地 / SS 显著性打分服务）已完成并验证（M0–M14 CI 全绿）。
-**下一个模块：M15 写入链 worker**（开发文档 §16）。
+多租户工程红线落地 / SS 显著性打分服务 / 写入链 worker / IS 简版）已完成并验证
+（M0–M16 CI 全绿）。
+**下一个模块：M17 运维操作面（CLI 优先，不建 Web 后台）**（开发文档 §18）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -212,6 +213,45 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   `lethefield_ss_llm_calls_total{result}`/`lethefield_ss_llm_tokens_total{type}`；端口 9105。
   M7 重建默认切全保真档（见 M7 行）。样例集 `services/ss/samples/stability_samples.jsonl`，
   稳定性报告 `deploy/baselines/m14_ss_stability.json`，结论进决策留痕。
+- M15 定案（写入链 worker `services/writer`，lethefield-writer；升级确认入档开发文档 §16 +
+  修订记录第 23 条）：消费 `scoring-results`（订阅 `rms-writer`，名单点
+  `ex_stream.SCORING_RESULTS_SUBSCRIPTION`）建 Event-Node。**信封只作触发 + s/node_key
+  来源**：c_i/τ_i/A_i 按 n 反查 EX（`ex_n.get_experience_event` 主键点查 /
+  `list_experience_events_range` 区间查，n 即主键；A_i 取 agent_actor_id 盖章列，
+  禁从事件体文本读）；一致性校验 fail-closed（node_key == node_key_of(event_id)、
+  信封 space == topic namespace、信封 event_id == EX 行，不符走失败路径 → DLQ）。
+  **node_key 冻结 `ev_{event_id}`**（SS/writer/rebuild 三处对齐，rebuild 注释转正）。
+  **幂等三分解**：顶点 `vertex_exists` / 时序边 `temporal_edge_exists` / 向量 `get_vector`
+  各自预检、缺失才补写，三项全在才 duplicate（三查询原语在 rms writer.py；部分失败
+  重试走补全路径）。**时序边前序 = 图内 n_created < n 的最大者**
+  （`latest_event_node(before_n=)`，n_created 无索引 per-space 图内扫描，标定归 §20；
+  归档缺口不跨接，理想链归 M7 重放）。**n 连续性**：NTracker 冷启动从图内 max
+  n_created 播种（writer 产出口径，M7 重建后同样正确），缺口 page `writer_n_gap` +
+  按 n 区间从 EX 补偿（s 取 scoring_result details 全保真；details 缺失跳过等 SS
+  补偿重发，正常路径幂等兜底）。**embedding = OpenAI 兼容 /embeddings HTTP 直连**
+  （httpx 零 SDK，`LETHEFIELD_EMBED_BASE_URL/API_KEY/MODEL/DIMS` 根 .env dotenv 单点，
+  缺失 fail-closed；**共享 rms_vectors 必须同模型同维度**——返回维度不符按失败处理，
+  模型变更 = 向量全量重建，选型与变更进决策留痕；DeepSeek 无 embeddings 端点，
+  真实冒烟前需另配 provider）；worker 启动 `ensure_vectors_index(dims=embed_dims)`
+  校验不符拒启动（rms_vectors 生产路径首个 owner）。应用层 DLQ 单点
+  `scoring_results_dlq_topic`（`<topic>-rms-writer-DLQ`）。元事件结构性不进本链路
+  （reinforce 不经 stream_publisher）。metrics 端口 **9106**。
+- M16 定案（IS 简版 `services/is`，lethefield-is；升级确认入档开发文档 §17 +
+  修订记录第 24 条）：CLI 优先形态（与 M17"不建 Web 后台"一致），无常驻进程无 metrics
+  端口。**契约 3 首次演进**：JWT 加标准注册 claim `jti/exp/iat`（四字段结构不变，
+  沿用契约 1 演进规则"只加不改"；无 jti 旧 dev token 验证侧跳过吊销检查，向后兼容）。
+  **吊销 = jti 吊销列表 + 有限时效**（PG `is_credentials.status`，API 验证侧逐请求
+  检查、checker 异常 fail-closed 传播不静默放行；默认 TTL 24h，
+  `LETHEFIELD_IS_TOKEN_TTL_SECONDS` 覆盖；1.0 不做刷新机制，重签发即刷新）。
+  **scope 白名单与 JWT 密钥解析单点在 `libs/clients/credentials`**
+  （`CREDENTIAL_SCOPES`/`DEBUG_SCOPE`/`jwt_secret`，api.auth 与 is.tokens 同源引用，
+  禁双拷贝）；凭证 store 同模块下沉（API 验证侧与 IS 签发侧共用，同 M11 auth_registry
+  先例）。**debug scope 签发侧闸门 fail-closed**：非 `--internal` 渠道拒签。
+  **签发先落吊销列表行再签名**（崩溃窗口不产出无法吊销的 token）。
+  账号/归属两表只被 IS 用留在 services/is/store.py；**空间创建顺序**：校验账号
+  （存在且 active）→ validate_space_id → provision 成功后才写 `is_space_owners`
+  归属行（无半开通状态）。§12.4 授权注册表入口收在 IS CLI
+  （`auth grant/revoke/list --space`，内部走 space_ref_of 哈希）。
 - **pytest 同名测试文件冲突**：tests 目录无 `__init__.py`，两个服务同名 `test_worker.py`
   会 import file mismatch——新服务测试文件名必须全局唯一（M14 踩坑，改 `test_scoring_worker.py`）。
 - ES 排序不能用 `_id`（fielddata 限制，报 search_phase_execution_exception）——日志游标
@@ -269,6 +309,11 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
 | `uv run python -m lethefield_ss worker [--once]` | M14：SS 打分 worker（ex-events consumer → 六维打分 → EX 回写 + scoring-results） |
 | `uv run python -m lethefield_ss smoke` | M14 任务二：真实 LLM 小批量冒烟（读根 .env，端点/模型/六维解析验证） |
 | `uv run python -m lethefield_ss validate --samples F --out R` | M14 任务三：打分稳定性验证（分布/塌缩/成本报告 JSON，结论进决策留痕） |
+| `uv run python -m lethefield_writer worker [--once]` | M15：写入链 worker（scoring-results consumer → 图顶点 + 时序边 + 向量，:9106 暴露口） |
+| `uv run python -m lethefield_is account create/list/disable` | M16：账号 CRUD |
+| `uv run python -m lethefield_is space create <space_id> --account A [--tier T]` | M16：空间创建入口（调 M9/M10 开通流水线，成功后登记归属） |
+| `uv run python -m lethefield_is credential issue/revoke/list` | M16：凭证签发（--internal 才可授 debug）与吊销（吊销列表立即生效） |
+| `uv run python -m lethefield_is auth grant/revoke/list --space S` | M16：训练数据授权注册表入口（§12.4） |
 | `docker compose --profile cell2 up -d` 后 `uv run pytest tests/integration/test_m10_migration_drill.py` | M10：跨 Cell 迁移演练（按需，不占常驻内存；默认 CI 自动 skip） |
 
 ## 约定

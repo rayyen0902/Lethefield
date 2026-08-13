@@ -31,6 +31,14 @@ from lethefield_clients.control_plane import (
     WatermarkState,
     local_cell,
 )
+from lethefield_clients.credentials import (
+    CREDENTIAL_SCOPES,
+    DEBUG_SCOPE,
+    CredentialRecord,
+    CredentialStatus,
+    CredentialStore,
+    jwt_secret,
+)
 from lethefield_clients.ex_n import (
     EXPERIENCE_TABLE,
     META_TABLE,
@@ -106,8 +114,13 @@ __all__ = [
     "AuthRegistryStore",
     "AuthScope",
     "AuthStatus",
+    "CREDENTIAL_SCOPES",
     "CellInfo",
     "ControlPlaneStore",
+    "CredentialRecord",
+    "CredentialStatus",
+    "CredentialStore",
+    "DEBUG_SCOPE",
     "DECISION_OUTCOMES",
     "ESCALATION_TYPES",
     "ExEvent",
@@ -136,6 +149,7 @@ __all__ = [
     "export_jsonl",
     "feed_topic",
     "gremlin_client",
+    "jwt_secret",
     "keyspace_name",
     "last_write_at",
     "last_write_key",

@@ -28,3 +28,34 @@ CREATE TABLE IF NOT EXISTS auth_registry (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- M16 IS 简版三表（v1.2 修订记录第 24 条⑤；既有卷走 migrations/002_is.sql）。
+CREATE TABLE IF NOT EXISTS is_accounts (
+    account_id  TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'disabled')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS is_space_owners (
+    account_id  TEXT NOT NULL REFERENCES is_accounts (account_id),
+    space_id    TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (account_id, space_id)
+);
+
+CREATE TABLE IF NOT EXISTS is_credentials (
+    jti         TEXT PRIMARY KEY,
+    account_id  TEXT NOT NULL REFERENCES is_accounts (account_id),
+    space_ids   TEXT[] NOT NULL,
+    agent_actor_id TEXT NOT NULL,
+    scopes      TEXT[] NOT NULL,
+    internal    BOOLEAN NOT NULL DEFAULT false,
+    status      TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'revoked')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked_at  TIMESTAMPTZ
+);

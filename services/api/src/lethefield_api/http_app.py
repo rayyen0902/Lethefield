@@ -5,10 +5,12 @@
 同步客户端内部 run_until_complete，在 async 端点的事件循环里会直接冲突报错。
 """
 
+from collections.abc import Callable
 from typing import Annotated, Protocol
 
 from fastapi import Body, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from lethefield_clients.credentials import CredentialStore
 from lethefield_rms.quota import QuotaExceeded
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 
@@ -36,8 +38,15 @@ def _required(body: dict, field: str):
     return value
 
 
-def create_app(ctx: ApiContext, rate_limiter: RateLimiter | None = None) -> FastAPI:
+def create_app(
+    ctx: ApiContext,
+    rate_limiter: RateLimiter | None = None,
+    revocation_checker: Callable[[str], bool] | None = None,
+) -> FastAPI:
     limiter = rate_limiter or NoopRateLimiter()
+    # M16：默认接真实吊销列表（仅当 token 带 jti 时才查库——无 jti 的旧 dev
+    # token 不触发 PG 依赖，向后兼容）；测试可注入假 checker。
+    checker = revocation_checker if revocation_checker is not None else CredentialStore().is_revoked
     app = FastAPI(title="lethefield-api", version="0.1.0")
 
     @app.exception_handler(ApiError)
@@ -59,7 +68,7 @@ def create_app(ctx: ApiContext, rate_limiter: RateLimiter | None = None) -> Fast
         header = request.headers.get("authorization", "")
         if not header.startswith("Bearer "):
             raise ApiError(ErrorCode.UNAUTHORIZED, "缺少 Bearer 凭证")
-        return verify_token(header[len("Bearer ") :])
+        return verify_token(header[len("Bearer ") :], is_revoked=checker)
 
     def _guard(request: Request, operation: str) -> Claims:
         claims = _claims(request)

@@ -14,6 +14,7 @@ dev = [
     "lethefield-decision-log",
     "lethefield-fs",
     "lethefield-ingest-dms",
+    "lethefield-is",
     "lethefield-logschema",
     "lethefield-metrics",
     "lethefield-metrics-exporter",
@@ -42,6 +43,7 @@ lethefield-clock-monitor = { workspace = true }
 lethefield-decision-log = { workspace = true }
 lethefield-fs = { workspace = true }
 lethefield-ingest-dms = { workspace = true }
+lethefield-is = { workspace = true }
 lethefield-logschema = { workspace = true }
 lethefield-metrics = { workspace = true }
 lethefield-metrics-exporter = { workspace = true }
