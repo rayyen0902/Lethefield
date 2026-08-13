@@ -18,6 +18,7 @@ dev = [
     "lethefield-logschema",
     "lethefield-metrics",
     "lethefield-metrics-exporter",
+    "lethefield-ops-cli",
     "lethefield-rms",
     "lethefield-scheduler",
     "lethefield-ss",
@@ -47,6 +48,7 @@ lethefield-is = { workspace = true }
 lethefield-logschema = { workspace = true }
 lethefield-metrics = { workspace = true }
 lethefield-metrics-exporter = { workspace = true }
+lethefield-ops-cli = { workspace = true }
 lethefield-rms = { workspace = true }
 lethefield-scheduler = { workspace = true }
 lethefield-ss = { workspace = true }

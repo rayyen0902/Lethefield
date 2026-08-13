@@ -171,3 +171,31 @@ def test_update_space_cell():
     assert "SET cell_id = %s, ex_cluster_id = %s" in statement
     assert "status" not in statement.split("SET")[1]  # 状态翻转由迁移流水线显式执行
     assert params == ("cell-2", "ex-local", "sp1")
+
+
+def test_update_space_tier():
+    """M17：tier 升降只改 tier 字段，不动 status/归属。"""
+    from lethefield_clients import MappingTableControlPlaneStore
+
+    session = _FakeSession()
+    store = MappingTableControlPlaneStore(session)
+    store.update_space_tier("sp1", Tier.PREMIUM)
+    update = [s for s in session.statements if s[0].startswith("UPDATE")]
+    assert len(update) == 1
+    statement, params = update[0]
+    assert "SET tier = %s" in statement
+    assert "status" not in statement.split("SET")[1]
+    assert params == ("premium", "sp1")
+
+
+def test_update_space_tier_unknown_space_fail_closed():
+    """M17：tier 调整对不存在的 space fail-closed（先 get 再 UPDATE）。"""
+    from lethefield_clients import MappingTableControlPlaneStore
+
+    class _EmptySession(_FakeSession):
+        def execute(self, statement, parameters=None):
+            return type("Rs", (), {"one": lambda self: None})()
+
+    store = MappingTableControlPlaneStore(_EmptySession())
+    with pytest.raises(SpaceNotFoundError):
+        store.update_space_tier("nope", Tier.HOT)

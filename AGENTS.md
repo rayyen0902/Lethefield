@@ -2,12 +2,12 @@
 
 ## 项目阶段
 
-M0–M16（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
+M0–M17（工程地基 / 存储基础设施 / RMS 图 Schema / FF 引擎 / 检索流程 / MCP·SDK 接口层 /
 FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租户调度器 /
 EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线 / 可观测性埋点 /
-多租户工程红线落地 / SS 显著性打分服务 / 写入链 worker / IS 简版）已完成并验证
-（M0–M16 CI 全绿）。
-**下一个模块：M17 运维操作面（CLI 优先，不建 Web 后台）**（开发文档 §18）。
+多租户工程红线落地 / SS 显著性打分服务 / 写入链 worker / IS 简版 / 运维操作面）
+已完成并验证（M0–M17 CI 全绿）。
+**下一步：阶段 1 准出验收**（开发文档 §19 验收总览，跨模块汇总判定）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -252,6 +252,21 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   （存在且 active）→ validate_space_id → provision 成功后才写 `is_space_owners`
   归属行（无半开通状态）。§12.4 授权注册表入口收在 IS CLI
   （`auth grant/revoke/list --space`，内部走 space_ref_of 哈希）。
+- M17 定案（运维操作面 `ops/ops_cli`，lethefield-ops-cli；升级确认入档开发文档修订记录
+  第 25 条）：**1.0 运维写入口唯一收口**——九条命令 `space status/destroy/set-tier`、
+  `migrate rebalance/to-cell/evacuate`（迁移三类触发）、`auth revoke`、
+  `cell watermark/register`，全部**必选** `--space`/`--cell` 绑定（evacuate 也是显式
+  space 列表，无全局形态；静态检查 = parser 内省单测 `test_no_global_commands.py`）。
+  scheduler/training/is 既有 CLI 保留为底层入口。**留痕包装单点
+  `lethefield_ops_cli.audit.run_with_audit`**：PG 预检 fail-closed（留痕库不可达拒绝
+  执行——处置类与留痕的原子要求由此满足）→ 执行 → `DecisionLogStore.submit`
+  （操作人 `--operator` > env `LETHEFIELD_OPERATOR` > OS 用户；`outcome` 恒
+  `accepted`——枚举语义是人类对建议的处置结果，执行成败记 `context.result`）；
+  业务已执行但留痕写入失败 → 退出码 2 + 人工补录提示。tier 升降 =
+  `MappingTableControlPlaneStore.update_space_tier`（本模块新增扩展方法，ABC 冻结
+  六方法不动）；新 Cell 筹备 = `cell register`（映射行登记，endpoints 必含
+  cassandra/es，幂等覆盖写；基础设施由运维自备）。配额用量展示为近似值（图计数
+  TTL 缓存语义，输出注明）。
 - **pytest 同名测试文件冲突**：tests 目录无 `__init__.py`，两个服务同名 `test_worker.py`
   会 import file mismatch——新服务测试文件名必须全局唯一（M14 踩坑，改 `test_scoring_worker.py`）。
 - ES 排序不能用 `_id`（fielddata 限制，报 search_phase_execution_exception）——日志游标
@@ -314,6 +329,12 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
 | `uv run python -m lethefield_is space create <space_id> --account A [--tier T]` | M16：空间创建入口（调 M9/M10 开通流水线，成功后登记归属） |
 | `uv run python -m lethefield_is credential issue/revoke/list` | M16：凭证签发（--internal 才可授 debug）与吊销（吊销列表立即生效） |
 | `uv run python -m lethefield_is auth grant/revoke/list --space S` | M16：训练数据授权注册表入口（§12.4） |
+| `uv run python -m lethefield_ops_cli space status --space S` | M17：space 状态查询（映射/tier/水位/配额用量，自动留痕） |
+| `uv run python -m lethefield_ops_cli space destroy --space S [--reason T]` | M17：整 space 销毁处置（M9/M10 流水线 + 契约 5 广播） |
+| `uv run python -m lethefield_ops_cli space set-tier --space S --tier T` | M17：tier 升降调整 |
+| `uv run python -m lethefield_ops_cli migrate rebalance/to-cell/evacuate ...` | M17：迁移三类触发（再平衡 / 指定目标 / Cell 退役，均显式绑定） |
+| `uv run python -m lethefield_ops_cli auth revoke --space S` | M17：授权撤回处置（注册表撤回 + 热层 scrub） |
+| `uv run python -m lethefield_ops_cli cell watermark --cell C [--refresh]` / `cell register --cell-id C --endpoint k=v` | M17：Cell 水位查看 / 新 Cell 筹备触发 |
 | `docker compose --profile cell2 up -d` 后 `uv run pytest tests/integration/test_m10_migration_drill.py` | M10：跨 Cell 迁移演练（按需，不占常驻内存；默认 CI 自动 skip） |
 
 ## 约定

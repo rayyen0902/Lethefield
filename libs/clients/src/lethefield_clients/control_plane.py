@@ -315,6 +315,14 @@ class MappingTableControlPlaneStore(ControlPlaneStore):
             (space_id,),
         )
 
+    def update_space_tier(self, space_id: str, tier: Tier) -> None:
+        """tier 升降调整（M17 运维操作面）：只改 tier 字段，不动 status/归属。"""
+        self.get_space_mapping(space_id)  # 不存在则 fail-closed
+        self._session.execute(
+            f"UPDATE {CONTROL_KEYSPACE}.{SPACES_TABLE} SET tier = %s WHERE space_id = %s",
+            (tier.value, space_id),
+        )
+
     def update_space_cell(self, space_id: str, cell_id: str, ex_cluster_id: str) -> None:
         """迁移切映射（M10）：space 归属 Cell / EX 集群一次性切换。
 

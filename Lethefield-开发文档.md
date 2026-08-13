@@ -31,6 +31,7 @@
 22. M14 降级规则分级定案：缺 1 维 → 中性值（默认 0.5 可配）+ degraded 标记回写 EX（未来可识别可重打分）+ 指标计数；不可解析或缺 ≥2 维 → 失败路径（重试 → DLQ）；`SS_DEGRADE_POLICY` 配置开关默认 `neutral_mark`；否决"缺维即整单重试"（LLM 抖动放大 DLQ，拿可用性事故治精度小问题）（详见 M14 降级规则）。
 23. M15 写入链实施定案（信封口径 + node_key 冻结 + embedding 一致性）：① `ScoringResult` 信封只作触发与 `s`/`node_key` 来源，`c_i`/`τ_i`/`A_i` 一律按 n 反查 EX（点查/区间查新接口）；信封与 EX 记录一致性校验（`envelope.node_key == node_key_of(event_id)`、`envelope.space_id` == topic namespace）不符 fail-closed → DLQ，EX 查无该 n = 上游不一致 → nack → DLQ + page；② node_key 规则冻结为 `node_key_of(event_id) = "ev_{event_id}"`，SS/writer/rebuild 三处单点对齐，rebuild"过渡约定"注释同步转正；③ 时序边前序 = 图内 `n_created < n` 的最大者，归档缺口不跨接（与 M7 重建"只建双端在热图"同规约，理想链由重放修复）；④ embedding 一致性规则：共享 `rms_vectors` 内的向量必须出自同一 embedding 模型（同 dims 不同模型语义不兼容），模型变更 = 该索引向量全量重建，选型与变更进决策留痕；⑤ n 缺口补偿按 n 区间从 EX 读事件 + `scoring_result` details 取 `s`（全保真），details 缺失 = SS 尚未打分 → 跳过等 SS 侧补偿重发（正常路径幂等兜底）（详见 M15）。
 24. M16 凭证体系定案（契约 3 首次演进 + 吊销机制选型）：① 契约 3 兼容演进——JWT 新增标准注册 claim `jti`/`exp`/`iat`（契约 3 四字段结构不变，验证侧对无 `jti` 的旧 dev token 跳过吊销检查，向后兼容；契约 3 自此沿用契约 1 演进规则：只加不改）；② 吊销机制 = jti 吊销列表（PG `is_credentials.status`，API 验证侧逐请求检查、checker 异常 fail-closed 传播不静默放行）+ 有限时效（默认 TTL 24h，`LETHEFIELD_IS_TOKEN_TTL_SECONDS` 覆盖；1.0 不做刷新机制，重签发即刷新）；③ `debug` scope 签发侧闸门 fail-closed（非 internal 拒签）；④ scope 白名单单点化（`libs/clients/credentials.py`，`api.auth` 与 `is.tokens` 同源引用，禁双拷贝对齐注释）；⑤ 账号/归属/凭证三表落 PG（`is_accounts`/`is_space_owners`/`is_credentials`）；⑥ 空间创建顺序：校验账号 → `validate_space_id` → provision 成功后才写归属行（无半开通状态）（详见 M16）。
+25. M17 运维操作面实施定案：① 形态 = 新包 `ops/ops_cli`（lethefield-ops-cli）统一收口全部人工触发点，scheduler/training/is 既有 CLI 保留为底层入口（测试与巡检依赖），ops_cli 在其上加"强制绑定 + 自动留痕"操作面；② 命令九条：`space status/destroy/set-tier`、`migrate rebalance/to-cell/evacuate`（迁移三类触发入口）、`auth revoke`、`cell watermark/register`，每条带**必选** `--space`/`--cell` 绑定（evacuate 也是显式 space 列表，无"对全部执行"形态），静态检查 = parser 内省单测（`test_no_global_commands.py`）；③ 留痕包装单点 `audit.run_with_audit`：PG 预检 fail-closed（留痕库不可达 → 拒绝执行，处置类与留痕的原子要求由此满足）、`outcome` 恒 `accepted`（枚举语义 = 人类对建议的处置结果，ops 决策无 agent 建议，不拉伸；执行成败记 `context.result`）、业务已执行但留痕写入失败 → 退出码 2 + 人工补录提示（不静默）；④ 操作人解析 `--operator` > env `LETHEFIELD_OPERATOR` > OS 用户；⑤ tier 升降 = `MappingTableControlPlaneStore.update_space_tier`（只改 tier 字段，ABC 冻结六方法不动）；⑥ 新 Cell 筹备 = `cell register` 登记映射行（endpoints 必含 `cassandra`/`es` 两键，INSERT 覆盖写幂等；Cell 基础设施由运维自备，本命令只收口"可参与调度"触发点）（详见 M17）。
 
 **v1.1 修订记录**（相对 v1.0，评审发现的问题修复）：
 1. 新增模块 M0（工程地基）、M14（SS 显著性打分服务）、M15（写入链 worker）、M16（IS 简版）——v1.0 中 SS、写入链、IS 三处只有零散要求、无责任模块，属遗漏。
@@ -841,6 +842,13 @@ MCP的说明文档（就是每次交互发给LLM的说明书）是现在就做�
 ### 明确不做
 - **不建 Web 管理后台**——1.0 运维低频，CLI + runbook 足够；Web 后台归 2.0（届时由服务商运维场景与商用工单流的真实需求决定形态），且不引入前端技术栈（守 Python 统一定案）。
 - 不做面向 C 端用户的自助控制台（C 端产品的自有后台由 C 端产品方建设，不在本服务范围）。
+
+### M17 实施定案（修订记录第 25 条）
+- 新包 `ops/ops_cli`（`lethefield_ops_cli`）为唯一运维写入口；九条命令：`space status/destroy/set-tier`、`migrate rebalance/to-cell/evacuate`、`auth revoke`、`cell watermark/register`，全部必选 `--space`/`--cell` 绑定（无全局形态），静态检查为 parser 内省单测。
+- 留痕包装单点 `lethefield_ops_cli.audit.run_with_audit`：PG 预检 fail-closed → 执行 → `DecisionLogStore.submit`（操作人/命令/参数/结果；`outcome` 恒 `accepted`，成败记 `context.result`）；留痕库不可达拒绝执行，业务已执行但留痕失败退出码 2 + 人工补录提示。
+- tier 升降走 `MappingTableControlPlaneStore.update_space_tier`（本模块新增的映射表扩展方法）；新 Cell 筹备走 `cell register`（映射行登记，基础设施由运维自备）。
+- scheduler/training/is 既有 CLI 保留为底层入口；配额用量展示为近似值（图计数 TTL 缓存语义，输出注明）。
+- 告警接收方式（邮件/IM webhook）选型为人工动作：用 `lethefield_decision_log submit` 记录选型决策，不在本模块写代码。
 
 ---
 

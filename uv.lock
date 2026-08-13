@@ -20,6 +20,7 @@ members = [
     "lethefield-logschema",
     "lethefield-metrics",
     "lethefield-metrics-exporter",
+    "lethefield-ops-cli",
     "lethefield-rms",
     "lethefield-scheduler",
     "lethefield-ss",
@@ -751,6 +752,7 @@ dev = [
     { name = "lethefield-logschema" },
     { name = "lethefield-metrics" },
     { name = "lethefield-metrics-exporter" },
+    { name = "lethefield-ops-cli" },
     { name = "lethefield-rms" },
     { name = "lethefield-scheduler" },
     { name = "lethefield-ss" },
@@ -777,6 +779,7 @@ dev = [
     { name = "lethefield-logschema", editable = "libs/logschema" },
     { name = "lethefield-metrics", editable = "libs/metrics" },
     { name = "lethefield-metrics-exporter", editable = "ops/metrics_exporter" },
+    { name = "lethefield-ops-cli", editable = "ops/ops_cli" },
     { name = "lethefield-rms", editable = "services/rms" },
     { name = "lethefield-scheduler", editable = "services/scheduler" },
     { name = "lethefield-ss", editable = "services/ss" },
@@ -1010,6 +1013,29 @@ requires-dist = [
     { name = "lethefield-metrics", editable = "libs/metrics" },
     { name = "prometheus-client", specifier = ">=0.20" },
     { name = "redis", specifier = ">=5.0" },
+]
+
+[[package]]
+name = "lethefield-ops-cli"
+version = "0.1.0"
+source = { editable = "ops/ops_cli" }
+dependencies = [
+    { name = "lethefield-clients" },
+    { name = "lethefield-decision-log" },
+    { name = "lethefield-logschema" },
+    { name = "lethefield-rms" },
+    { name = "lethefield-scheduler" },
+    { name = "lethefield-training" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "lethefield-clients", editable = "libs/clients" },
+    { name = "lethefield-decision-log", editable = "ops/decision_log" },
+    { name = "lethefield-logschema", editable = "libs/logschema" },
+    { name = "lethefield-rms", editable = "services/rms" },
+    { name = "lethefield-scheduler", editable = "services/scheduler" },
+    { name = "lethefield-training", editable = "services/training" },
 ]
 
 [[package]]
