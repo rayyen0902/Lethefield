@@ -149,7 +149,7 @@ def test_flag_conflict_processed_idempotently(stack, space):
     _write_node(stack, space, "new", e2_id, s=1.0, n_created=n2)
 
     stats = corrections.process_corrections(
-        stack.client, stack.ex_session, gname=space, space_id=space, n_now=_n_now(stack, space)
+        stack.client, stack.ex_session, gname=space, space_id=space
     )
     assert (stats.applied, stats.duplicate, stats.pending) == (1, 0, 0)
     assert _edge_exists(stack, space, "new", "old", "supersedes")
@@ -157,12 +157,12 @@ def test_flag_conflict_processed_idempotently(stack, space):
     phi = ff.read_phi(stack.client, space, space_id=space, node_key="old")
     assert phi.s == pytest.approx(0.5)  # 1.0 − 0.5
     assert phi.conflict_count == 1
-    assert phi.n_last_touched == 2  # conflict δ 更新 n_last_touched
+    assert phi.n_last_touched == 2  # 事件时刻语义（修订 27）：= 纠错事件 e2 的 n
 
     # 纠错事件尚无对应图节点 → pending（EX 不可变记录保证下轮再处理）
     _ingest(stack, space, "fact v3", ref_conflict="old")
     stats = corrections.process_corrections(
-        stack.client, stack.ex_session, gname=space, space_id=space, n_now=_n_now(stack, space)
+        stack.client, stack.ex_session, gname=space, space_id=space
     )
     assert (stats.applied, stats.duplicate, stats.pending) == (0, 1, 1)
     phi_after = ff.read_phi(stack.client, space, space_id=space, node_key="old")
@@ -184,7 +184,7 @@ def test_chain_correction_retrieval(stack, space):
     _write_node(stack, space, "C", e_c, n_created=n_c, content="version C of the fact")
 
     stats = corrections.process_corrections(
-        stack.client, stack.ex_session, gname=space, space_id=space, n_now=_n_now(stack, space)
+        stack.client, stack.ex_session, gname=space, space_id=space
     )
     assert stats.applied == 2  # B→A、C→B 两条 supersedes 边
 

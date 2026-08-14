@@ -58,13 +58,13 @@ class FakeClient:
 def test_apply_correction_ok_writes_delta_and_edge():
     client = FakeClient(phi_entries=_phi_entries(s=0.8, n_lt=5))
     outcome = corrections.apply_correction(
-        client, "g", space_id="sp", new_node_key="new", old_node_key="old", n_now=10
+        client, "g", space_id="sp", new_node_key="new", old_node_key="old", n_event=10
     )
     assert outcome == "ok"
     _, bindings = client.calls[-1]
     assert bindings["newKey"] == "new" and bindings["oldKey"] == "old"
     assert bindings["sNew"] == pytest.approx(0.3)  # 0.8 − 0.5
-    assert bindings["nNow"] == "10"  # conflict δ 更新 n_last_touched
+    assert bindings["nTouch"] == "10"  # 事件时刻语义（修订 27）：n_last_touched=n_event
     assert bindings["locked"] is False
     assert isinstance(bindings["nStar"], str)  # long 字符串绑定（int32 限制）
 
@@ -72,7 +72,7 @@ def test_apply_correction_ok_writes_delta_and_edge():
 def test_apply_correction_duplicate_zero_write():
     client = FakeClient(phi_entries=_phi_entries(), apply_result=("duplicate",))
     outcome = corrections.apply_correction(
-        client, "g", space_id="sp", new_node_key="new", old_node_key="old", n_now=10
+        client, "g", space_id="sp", new_node_key="new", old_node_key="old", n_event=10
     )
     assert outcome == "duplicate"  # 同对已存在边：脚本零写入，调用方只解释结果
 
@@ -80,7 +80,7 @@ def test_apply_correction_duplicate_zero_write():
 def test_apply_correction_consolidated_locks_s():
     client = FakeClient(phi_entries=_phi_entries(s=0.8, consolidated=True))
     corrections.apply_correction(
-        client, "g", space_id="sp", new_node_key="new", old_node_key="old", n_now=10
+        client, "g", space_id="sp", new_node_key="new", old_node_key="old", n_event=10
     )
     _, bindings = client.calls[-1]
     assert bindings["locked"] is True
@@ -104,7 +104,7 @@ def test_process_corrections_pending_when_new_node_not_ingested(monkeypatch):
     events = [_event(1, "e1", None), _event(2, "e2", "old")]
     monkeypatch.setattr(corrections, "list_experience_events", lambda s, *, space_id: events)
     client = FakeClient(refex_keys=[[]])  # ref_ex 反查无结果：新节点未入图
-    stats = corrections.process_corrections(client, None, gname="g", space_id="sp", n_now=10)
+    stats = corrections.process_corrections(client, None, gname="g", space_id="sp")
     assert stats.pending == 1 and stats.applied == 0 and stats.duplicate == 0
 
 
@@ -113,7 +113,7 @@ def test_process_corrections_pending_when_old_node_missing(monkeypatch):
     monkeypatch.setattr(corrections, "list_experience_events", lambda s, *, space_id: events)
     # 新节点查得到，旧节点 read_phi 空结果 → KeyError → pending
     client = FakeClient(phi_entries=None, refex_keys=[["new"]])
-    stats = corrections.process_corrections(client, None, gname="g", space_id="sp", n_now=10)
+    stats = corrections.process_corrections(client, None, gname="g", space_id="sp")
     assert stats.pending == 1 and stats.applied == 0
 
 
@@ -121,10 +121,12 @@ def test_process_corrections_applied_and_duplicate(monkeypatch):
     events = [_event(2, "e2", "old"), _event(3, "e3", "old")]
     monkeypatch.setattr(corrections, "list_experience_events", lambda s, *, space_id: events)
     client = FakeClient(phi_entries=_phi_entries(), refex_keys=[["new2"], ["new3"]])
-    stats = corrections.process_corrections(client, None, gname="g", space_id="sp", n_now=10)
+    stats = corrections.process_corrections(client, None, gname="g", space_id="sp")
     assert stats.applied == 2  # 不同新节点 → 两条边两次 δ（幂等约束的是"同一对"）
+    touches = sorted(b["nTouch"] for script, b in client.calls if "nTouch" in b)
+    assert touches == ["2", "3"]  # touch 时刻 = 各纠错事件自身 n（修订 27，非全局 n_now）
     client2 = FakeClient(
         phi_entries=_phi_entries(), refex_keys=[["new2"], ["new3"]], apply_result=("duplicate",)
     )
-    stats2 = corrections.process_corrections(client2, None, gname="g", space_id="sp", n_now=10)
+    stats2 = corrections.process_corrections(client2, None, gname="g", space_id="sp")
     assert stats2.duplicate == 2 and stats2.applied == 0

@@ -229,7 +229,9 @@ def cmd_diff(args) -> int:
         },
     }
 
-    # 向量：embedding 不可重放——只登记销毁前后对照，缺失是预期发现项
+    # 向量：修订记录第 25 条——rms_vectors 不属重放范围（ES 快照运维前提），
+    # 本类别只登记对照信息、不计入总体判定；图侧 node_key/ref_ex 保真即
+    # "向量重关联语义可重建"的校验口径。
     kb, ka = set(before["vectors"]), set(after["vectors"])
     restored_same = sorted(
         k for k in kb & ka if before["vectors"][k]["sha256"] == after["vectors"][k]["sha256"]
@@ -239,14 +241,22 @@ def cmd_diff(args) -> int:
         "after": len(ka),
         "missing_after_rebuild": sorted(kb - ka),
         "restored_identical": restored_same,
-        "ok": kb == ka and len(restored_same) == len(kb),
-        "note": "embedding 不可重放（红线 3）：重放不还原热节点向量属当前设计边界",
+        "informational": True,  # 不计入总体 ok（修订 25 边界）
+        "note": "rms_vectors 不属重放范围；恢复 = ES 快照运维前提（runbook 已落地）",
     }
 
-    report["ok"] = all(c["ok"] for c in report["categories"].values())
+    report["ok"] = all(c["ok"] for c in report["categories"].values() if not c.get("informational"))
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str))
-    print(json.dumps({k: v["ok"] for k, v in report["categories"].items()}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                k: ("informational" if v.get("informational") else v["ok"])
+                for k, v in report["categories"].items()
+            },
+            ensure_ascii=False,
+        )
+    )
     print(f"[diff] → {args.out}  总体 {'OK' if report['ok'] else '有差异'}")
     return 0 if report["ok"] else 1
 

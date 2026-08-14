@@ -10,6 +10,10 @@
   下轮再处理，EX 不可变记录保证不丢）。
 - FF 公式单点不变：−0.5 由 `ff.compute_delta` 在 Python 侧预算（含固化锁定语义），
   Groovy 只落库不算公式。
+- **touch 时刻 = 纠错事件的 `event.n`（事件时刻语义，修订记录第 27 条）**：处理时刻
+  （当轮全局 n_now）不被任何契约记录、随处理器调度节奏漂移，不可能是规范状态；
+  事件时刻在手边可免费确定，直播与 M7 重放（`replay_events` 按 event.n 施加）
+  天然精确一致——保真校验无容忍例外。
 - 不设硬失效标志：supersedes 边记录事实，"是否返回、如何降权"下沉检索策略
   （M4 Stage 3 已实现重定向与 trace_history）。
 
@@ -27,8 +31,6 @@ from lethefield_clients import (
     ex_cassandra_cluster,
     gremlin_client,
     list_experience_events,
-    n_now,
-    redis_client,
     redline1_exempt,
 )
 
@@ -56,7 +58,7 @@ newV.addEdge('supersedes', oldV)
 if (!locked) {
     oldV.property('s', sNew as double)
     oldV.property('n_star_cached', nStar as long)
-    oldV.property('n_last_touched', nNow as long)
+    oldV.property('n_last_touched', nTouch as long)
 }
 oldV.property('conflict_count', (oldV.value('conflict_count') as int) + 1)
 t.tx().commit()
@@ -91,11 +93,13 @@ def apply_correction(
     space_id: str,
     new_node_key: str,
     old_node_key: str,
-    n_now: int,
+    n_event: int,
     ff_config: ff.FFConfig = ff.DEFAULT_CONFIG,
 ) -> str:
     """施加单条纠错：建 supersedes 边 + 旧节点 −0.5（原子幂等，返回 ok/duplicate）。
 
+    `n_event` = 纠错事件的 n（事件时刻语义，修订记录第 27 条）——touch 落
+    n_last_touched=n_event，与 M7 重放精确一致；禁传处理时刻的全局 n_now。
     FF 决策在 Python 侧（compute_delta 单点，固化锁定语义自带）；图脚本只做
     存在性检查与落库。
     """
@@ -105,7 +109,7 @@ def apply_correction(
         delta=ff.DELTA_CONFLICT,
         touch=True,
         counter_key="conflict_count",
-        n_now=n_now,
+        n_now=n_event,
         config=ff_config,
     )
     result = (
@@ -118,7 +122,7 @@ def apply_correction(
                 "oldKey": old_node_key,
                 "sNew": new.s,
                 "nStar": str(new.n_star_cached),
-                "nNow": str(n_now),
+                "nTouch": str(n_event),
                 "locked": phi.consolidated_at is not None,
             },
         )
@@ -138,10 +142,12 @@ def process_corrections(
     *,
     gname: str,
     space_id: str,
-    n_now: int,
     ff_config: ff.FFConfig = ff.DEFAULT_CONFIG,
 ) -> CorrectionsStats:
-    """单 space 一轮：扫 EX 纠错事件，逐条幂等施加 supersedes 边 + −0.5。"""
+    """单 space 一轮：扫 EX 纠错事件，逐条幂等施加 supersedes 边 + −0.5。
+
+    touch 时刻逐事件取 `event.n`（修订记录第 27 条），不需要全局 n_now。
+    """
     stats = CorrectionsStats()
     for event in list_experience_events(ex_session, space_id=space_id):
         if not event.ref_conflict:
@@ -157,7 +163,7 @@ def process_corrections(
                 space_id=space_id,
                 new_node_key=new_key,
                 old_node_key=event.ref_conflict,
-                n_now=n_now,
+                n_event=event.n,
                 ff_config=ff_config,
             )
         except KeyError:
@@ -190,7 +196,6 @@ def main() -> int:
     ex_cluster = ex_cassandra_cluster()
     ex_session = ex_cluster.connect()
     cell_cluster = cassandra_cluster()
-    redis = redis_client()
     try:
         if args.space:
             spaces = [args.space]
@@ -205,7 +210,6 @@ def main() -> int:
                 ex_session,
                 gname=space_id,  # 图名 = space_id（M5 定案约定）
                 space_id=space_id,
-                n_now=n_now(redis, ex_session, space_id=space_id),
             )
             print(
                 f"[{space_id}] applied={stats.applied} "
@@ -215,7 +219,6 @@ def main() -> int:
         client.close()
         ex_cluster.shutdown()
         cell_cluster.shutdown()
-        redis.close()
     return 0
 
 

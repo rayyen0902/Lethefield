@@ -16,7 +16,8 @@ text-embedding-v4 真实向量）。演练前补充造态：hobby_trail reinforc
    20 事件规模）。无 `rebuild_scoring_missing`（20/20 打分元事件齐全）。
 4. 字段级 diff + 服务恢复验证。
 
-**RTO 首测：约 24s（销毁不计入则为 16.4s）**——20 事件微型 space 的图侧恢复；
+**RTO 首测：约 24s（销毁不计入则为 16.4s）**；修订 27 修复后重跑（本报告 §2 数据
+以重跑为准）：重放 **21.9s**——20 事件微型 space 的图侧恢复；
 检索面恢复 = ES 快照运维前提（修订记录第 25 条，实证见 §3）。规模外推无依据，
 留待混沌演练实测。
 
@@ -29,22 +30,21 @@ runbook 见 `运维-runbook-ES快照备份恢复-v0_1.md`）。
 
 | 类别 | 结果 |
 |---|---|
-| 顶点字段级（content/τ/ref_ex/s/n_created/n_last_touched/n_star_cached/三计数器/A_i/固化态存在性） | 20/20 命中，仅 1 节点 2 字段差异（见下） |
+| 顶点字段级（content/τ/ref_ex/s/n_created/n_last_touched/n_star_cached/三计数器/A_i/固化态存在性） | **20/20 精确相等，零差异** |
 | temporal 边 19 + supersedes 边 2 | 完全一致 |
 | 归档快照 | 0 = 0（本数据集 grace_n 未达，未覆盖，见缺口登记） |
 | 向量 node_key 关联 | 图侧 node_key/ref_ex 全部保真，向量重关联语义可重建 ✓（重嵌入不属本次演练） |
 
 **δ 重放链验证（工单关注点）**：两条被纠错旧节点重放后 s=0.000 与销毁前**精确一致**——
-推导链完整（scoring_result details 原始 s 0.167/0.233 → ref_conflict 事件重放 −0.5 →
-clamp 0），conflict_count=1 一致；reinforce 链（0.233→0.833 三次 +0.2）与固化态
-（n_star_cached=LONG_MAX、consolidated 存在性）同样精确复现。
+推导链完整（scoring_result details 原始 s → ref_conflict 事件重放 −0.5 → clamp 0），
+conflict_count=1 一致；reinforce 链（三次 +0.2）与固化态（n_star_cached=LONG_MAX、
+consolidated 存在性）同样精确复现。
 
-**唯一差异（如实报告，未修）**：home_old 节点 `n_last_touched` 20→19、
-`n_star_cached` 20→19。根因明确：真实路径 corrections 处理器在两笔纠错（n=19、n=20）
-都到达后单轮处理，对旧节点按**处理时刻** n_now=20 触；重放按**纠错事件自身的 n=19** 触。
-与"理想化 sweep"同族——真实处理节奏不可复现，重放 = 规范历史。s 值与计数器不受影响
-（+0.2/−0.5 与 n 无关），仅遗忘视界差 1 个事件距离。建议作为"处理时刻 vs 事件时刻"
-已登记分歧类别入档。
+**零差异的达成路径（修订记录第 27 条）**：首轮演练曾发现 home_old `n_last_touched`/
+`n_star_cached` ±1 差异——直播路径 `apply_correction` 原取处理时刻（当轮全局 n_now），
+重放取纠错事件自身 `event.n`；处理时刻不被任何契约记录、随处理器调度漂移，不可能是
+规范状态。定案修复 = touch 时刻改取 `event.n`（事件时刻语义），本轮重跑验证直播值
+（n_last_touched=19）与重放值**精确相等**，保真校验无容忍例外。
 
 ## 3. 发现项
 
