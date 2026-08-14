@@ -102,3 +102,7 @@ Time zone: Asia/Shanghai (CST, +0800)
 5. **建议**：仓库同步用 rsync 工作副本的方式已验证可行（含 .git，排除 .venv/var 等派生物）；后续如需常态化，可把 §3.5 的 rsync 命令固化成脚本。
 2. **RTC in local TZ 警告**（未处理，待机主决定）：不影响 NTP 同步；若机器不双启动 Windows，建议 `timedatectl set-local-rtc 0` 消除警告。
 3. **SSH 用户名**：目标机无 `caopinggege` 用户，统一用 `ray@ubunturay`；建议 Mac 侧 `~/.ssh/config` 加 `Host ubunturay / User ray` 固化。
+
+## 6. 移机复验记录
+
+- 2026-08-14：物理机移机（更换物理位置/网络）。移机前 `make down` 干净停栈（卷保留）+ Mac 侧 `~/.ssh/config` 补 `Host ubunturay / User ray`（§5 缺口 4 落地）；复电后 Tailscale IP 不变（100.92.236.89 直连），`make up` 10 容器齐全，按验收同口径 `make reset && bash scripts/ci.sh` 全量复验**全绿**（集成 122 passed / 1 skipped，426.81s ≈ 基线 422.21s），环境无损。注：非交互 ssh 的 PATH 不带 `~/.local/bin`，远程跑 make/CI 需 `export PATH="$HOME/.local/bin:$PATH"` 前缀。
