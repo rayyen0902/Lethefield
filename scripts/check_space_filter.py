@@ -73,6 +73,9 @@ BUILTIN_EXEMPTIONS = {
         "必填 --graph 单图巡检（图名即 space，入口已显式收敛到单 space）"
     ),
     "scripts/check_redlines.py": "红线汇总核验器：集群级核验入口，无 space 维度",
+    "scripts/check_es_snapshot.py": (
+        "ES 快照存在性巡检（修订记录 25 配套）：集群级快照仓库元数据，无 space 维度"
+    ),
 }
 
 # 规则 B：调用名触发集合（dotted 末段命中即触发；indices.stats 按完整后缀判定）

@@ -49,10 +49,14 @@ services:
       discovery.type: single-node
       xpack.security.enabled: "false"
       ES_JAVA_OPTS: -Xms512m -Xmx512m
+      # 修订记录第 25 条配套：rms_vectors 快照备份的 fs 仓库路径（runbook 见
+      # 运维-runbook-ES快照备份恢复-v0_1.md）
+      path.repo: /usr/share/elasticsearch/snapshots
     ports:
       - "9200:9200"
     volumes:
       - es-graph-data:/usr/share/elasticsearch/data
+      - es-graph-snapshots:/usr/share/elasticsearch/snapshots
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health > /dev/null"]
       interval: 10s
@@ -248,6 +252,7 @@ volumes:
   cassandra-cell-2-data:
   cassandra-ex-data:
   es-graph-data:
+  es-graph-snapshots:
   es-graph-2-data:
   es-ops-data:
   pulsar-data:
