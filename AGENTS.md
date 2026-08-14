@@ -13,6 +13,7 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
 
 ## 已验证的环境事实（不要凭印象推翻）
 
+- CI/演练机已就位（Tailscale `ubunturay` 100.92.236.89，`ssh ray@ubunturay`；全量 CI 8m35s 全绿，见 `环境-物理机-ci-runner-v0_1.md`；该机 uv 直连 PyPI 会被重置，已配用户级 `~/.config/uv/uv.toml` 清华镜像，重装/换机需带上）。
 - JanusGraph 1.0.0 `ids.authority.wait-time` 默认值实测 **300ms**（management toString = PT0.3S）。
 - kNN 跨 space 零泄漏 = `routing`（分片收拢）+ `space_id` 过滤（语义隔离）双重机制，
   只带 routing 会泄漏（分片是多 space 共享的）——M4 Stage 2 实现必须沿用，见 tests/integration/conftest.py。
