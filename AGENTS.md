@@ -111,8 +111,15 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   源图可能含重放不覆盖的 consolidation 边）；写路径 migrating → 429 rate_limited
   （复用现有契约码，retrieve 放行）；本地档演练 = compose `cell2` profile（按需起、
   默认不进 CI，heap ~1.3G 注释锁死），实测只读窗口 15.6s（记录
-  `deploy/baselines/m10_migration_drill.jsonl`）；EX 跨集群 sstableloader 与 API 多 Cell
-  连接路由是已登记缺口。
+  `deploy/baselines/m10_migration_drill.jsonl`）。**准出档已闭合**（2026-08-14，
+  物理机 ubunturay）：compose 加 `ex2` profile（第二 EX 集群 cassandra-ex-2:9143，
+  独立集群名/卷），`migrate_space` 加 `ex_transfer` + `to_ex_cluster_id` 成对注入点
+  （跨集群 EX 迁移语义；同给或同不给，缺一则 MigrationError）；演练
+  `tests/integration/test_m10_migration_drill_exit.py` = nodetool snapshot → 源容器内
+  整理 loader 布局 → `sstableloader -d cassandra-ex-2` 逐表流式 → 行数/n 连续性校验，
+  实测只读窗口 21.3s、EX 传输 26980B/10.4s（记录
+  `deploy/baselines/m10_migration_drill_exit.jsonl`）；API 多 Cell 连接路由仍是
+  已登记缺口。
 - M11 定案：训练数据管线在 `services/training`（lethefield-training）。feed 信封与 topic
   单点 `libs/clients/training_feed.py`（topic `lethefield-training/feeds/raw`，短 retention
   **过境 ≠ 沉淀**；信封 kind 四值 + R1/R2 判定纯函数 `decision_rules` 单点——提交路径与
@@ -337,6 +344,7 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
 | `uv run python -m lethefield_ops_cli auth revoke --space S` | M17：授权撤回处置（注册表撤回 + 热层 scrub） |
 | `uv run python -m lethefield_ops_cli cell watermark --cell C [--refresh]` / `cell register --cell-id C --endpoint k=v` | M17：Cell 水位查看 / 新 Cell 筹备触发 |
 | `docker compose --profile cell2 up -d` 后 `uv run pytest tests/integration/test_m10_migration_drill.py` | M10：跨 Cell 迁移演练（按需，不占常驻内存；默认 CI 自动 skip） |
+| `docker compose --profile cell2 --profile ex2 up -d` 后 `uv run pytest tests/integration/test_m10_migration_drill_exit.py` | M10：迁移演练准出档（EX 跨集群 sstableloader 流式传输，按需；默认 CI 自动 skip） |
 
 ## 约定
 
