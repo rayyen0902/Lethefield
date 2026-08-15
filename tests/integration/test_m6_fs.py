@@ -35,6 +35,7 @@ from lethefield_rms import ff
 from lethefield_rms.retrieve import retrieve
 from lethefield_rms.schema import ensure_graph_schema
 from lethefield_rms.vectors import VECTORS_INDEX, ensure_vectors_index, index_vector
+from prometheus_client import REGISTRY
 
 TAU = 1_720_000_000_000
 
@@ -346,6 +347,17 @@ def test_worker_run_once_and_liveness(stack, space):
         store, stack.client, stack.ex_session, stack.cell_session, stack.es, stack.redis
     )
     assert space in results  # 图存在但无 ex:n 缓存 → n_now 从 EX MAX(n) 重建为 0，无触发
+
+    # M12 指标按名断言（真实 run_once 发射路径）：processed counter 每 space 四类结果都落，
+    # lag gauge 需 prev 心跳存在——第二轮 run_once 时第一轮的心跳已在，lag 必发射
+    assert (
+        REGISTRY.get_sample_value("lethefield_fs_sweep_processed_total", {"result": "neglected"})
+        is not None
+    )
+    run_once(store, stack.client, stack.ex_session, stack.cell_session, stack.es, stack.redis)
+    lag = REGISTRY.get_sample_value("lethefield_fs_sweep_lag_seconds")
+    assert lag is not None and lag >= 0
+
     store.unregister_space(space)  # 不留 active 映射（后续模块的 sweep 枚举会扫到）
 
     # 心跳已写：全局 + 每 space

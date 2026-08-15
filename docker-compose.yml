@@ -42,6 +42,30 @@ services:
       retries: 30
       start_period: 60s
 
+  # ---------------------------------------------------------------- M10 ex2 profile
+  # 准出档迁移演练用第二 EX 集群（定案：按需起，默认不进 CI——
+  # `docker compose --profile ex2 up -d`）。独立集群名 + 独立卷，与 cassandra-ex
+  # 物理隔离；sstableloader 经容器网络 cassandra-ex → cassandra-ex-2:7000 流式传输。
+  cassandra-ex-2:
+    image: cassandra:4.1
+    profiles: ["ex2"]
+    environment:
+      MAX_HEAP_SIZE: 1G
+      HEAP_NEWSIZE: 256M
+      CASSANDRA_RPC_ADDRESS: "0.0.0.0"
+      CASSANDRA_BROADCAST_RPC_ADDRESS: cassandra-ex-2
+      CASSANDRA_CLUSTER_NAME: lethefield-ex-2
+    ports:
+      - "9143:9042"
+    volumes:
+      - cassandra-ex-2-data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
   es-graph:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     environment:
@@ -251,6 +275,7 @@ volumes:
   cassandra-cell-data:
   cassandra-cell-2-data:
   cassandra-ex-data:
+  cassandra-ex-2-data:
   es-graph-data:
   es-graph-snapshots:
   es-graph-2-data:

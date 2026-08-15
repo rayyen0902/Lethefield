@@ -29,6 +29,7 @@ from lethefield_ingest_dms.backlog import (
     BACKLOG_SINCE_KEY,
     check_backlog,
     fetch_training_backlog,
+    report_backlog,
 )
 from lethefield_ingest_dms.config import DmsConfig
 from lethefield_ingest_dms.freshness import STALE_KEY_PREFIX, check_freshness
@@ -40,6 +41,7 @@ from lethefield_ingest_dms.probe import (
 from lethefield_scheduler import pulsar_admin
 from lethefield_scheduler.destroy_broadcast import make_broadcast
 from lethefield_scheduler.training_control_sink import run_once
+from prometheus_client import REGISTRY
 
 
 @pytest.fixture(scope="module")
@@ -80,6 +82,15 @@ def test_backlog_stall_triggers_page_alert(stack):
 
         backlog = fetch_training_backlog(stack.pulsar_admin_url)
         assert backlog >= 1  # 真实积压（consumer 停摆）
+
+        # M12 指标按名断言（DMS run_once 的发射点 = report_backlog，随真实积压上报）
+        report_backlog(backlog)
+        assert (
+            REGISTRY.get_sample_value(
+                "lethefield_pulsar_backlog_events", {"namespace_class": "training_control"}
+            )
+            == backlog
+        )
 
         t0 = datetime.now(UTC)
         assert check_backlog(redis, backlog, now=t0, stale_seconds=60) == []  # 首次非零只记时锚

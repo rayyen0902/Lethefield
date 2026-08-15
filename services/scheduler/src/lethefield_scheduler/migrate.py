@@ -11,8 +11,10 @@ status 回 active（**只读窗口终点**，实测时长入报告）→ 宽限�
   keyspace 复制演练——scratch keyspace 过渡（copy → 校验 → DROP 源 → 回拷正名 →
   DROP scratch），全步骤真实执行。keyspace 名 = `ex_{space_id}` 是冻结命名契约，
   同集群内"迁到目标集群的同名 keyspace"只能靠过渡拷贝达成最终正名状态。
-- **准出档缺口（已登记）**：EX 跨集群 sstableloader 流式传输本模块不覆盖；
-  `_copy_ex_keyspace` 的源/目标 session 参数化即跨集群形态的同一接口。
+- **准出档**：EX 跨集群迁移经 `ex_transfer` 注入点（sstableloader 流式传输的
+  编排属演练工具链，不进本模块）+ `to_ex_cluster_id` 切映射时一并更新 EX 归属。
+  两者必须同给或同不给（给了目标集群不做传输 = 映射指向无数据集群）。
+  跨集群时源 EX keyspace 的宽限期清理按注销流程由调用方处置（设计 §11 迁移第 5 步）。
 - Pulsar 全局单池 1.0 是空操作（namespace 不变）；粗粒度分片池演进后才有
   Pulsar 侧迁移（§18.2），此处留扩展点。
 
@@ -236,9 +238,18 @@ def migrate_space(
     grace_seconds: float = 0.0,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    to_ex_cluster_id: str | None = None,
+    ex_transfer: Callable[[], tuple[int, int]] | None = None,
 ) -> MigrationReport:
-    """迁移一个 space 到目标 Cell（端到端；只读窗口实测入报告）。"""
+    """迁移一个 space 到目标 Cell（端到端；只读窗口实测入报告）。
+
+    准出档跨集群 EX：`ex_transfer` 注入 EX 迁移步骤（返回 (经验事件数, 元事件数)，
+    内部须含传输后校验），`to_ex_cluster_id` 在切映射时替换映射的 EX 归属；
+    两者必须成对提供（默认 None = 本地档同集群语义）。
+    """
     validate_space_id(space_id)
+    if (to_ex_cluster_id is None) != (ex_transfer is None):
+        raise MigrationError("to_ex_cluster_id 与 ex_transfer 必须成对提供（跨集群 EX 迁移语义）")
     mapping = deps.store.get_space_mapping(space_id)  # 未注册 fail-closed
     if mapping.status is not SpaceStatus.ACTIVE:
         raise MigrationError(f"space {space_id} 状态 {mapping.status} 不可迁移（需 active）")
@@ -289,8 +300,12 @@ def migrate_space(
         vector_docs = _copy_vectors(deps.source_es, deps.target_es, space_id)
         t = mark("vector_copy", t)
 
-        # 4. EX keyspace 复制（本地档同集群 scratch 过渡，全步骤真实执行）
-        ex_experience, ex_meta = _migrate_ex_same_cluster(deps.ex_session, space_id)
+        # 4. EX keyspace 复制（本地档同集群 scratch 过渡 / 准出档跨集群注入传输，
+        #    全步骤真实执行）
+        if ex_transfer is not None:
+            ex_experience, ex_meta = ex_transfer()
+        else:
+            ex_experience, ex_meta = _migrate_ex_same_cluster(deps.ex_session, space_id)
         t = mark("ex_copy", t)
 
         # 5. 等价校验：目标图 == EX 重放计划（不是与源图比——源图可能含重放不覆盖的
@@ -314,7 +329,9 @@ def migrate_space(
         # 6. 切映射 + status 回 active——只读窗口终点。
         #    不归点 = update_space_cell（映射指向目标）：此后失败不得回滚目标侧，
         #    空间已由目标 Cell 服务，残留按清理异常上交。
-        deps.store.update_space_cell(space_id, target_cell.cell_id, mapping.ex_cluster_id)
+        deps.store.update_space_cell(
+            space_id, target_cell.cell_id, to_ex_cluster_id or mapping.ex_cluster_id
+        )
         cutover_done = True
         if cache is not None:
             cache.invalidate(space_id)
