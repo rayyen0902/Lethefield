@@ -21,6 +21,7 @@ GPU 现状：驱动已就绪（`nvidia-smi` 正常，空闲 7 W / 34 °C）。1.
 - 主机名：`ubunturay`，Tailscale IPv4：`100.92.236.89`（账号 rayyen0902@）
 - 验收期间在线，与 Mac（macbook-pro-1, 100.119.34.126）为 **direct 直连**（123.139.101.18:10490），未走 DERP 中继
 - SSH 入口：`ssh ray@ubunturay`（本机用户 `caopinggege` 在目标机不存在，必须用 `ray@`；host key 已加入 known_hosts）
+- 备用通道（2026-08-18 用户开通，阿里云中转）：`ssh -p 6000 ray@39.106.89.255`——公网入口，Tailscale 故障时的备用路径（已实测连通，host key 已入 known_hosts）。**安全待办：该机无免密 sudo，未能核实 sshd 配置——公网暴露 SSH 必须确认 `PasswordAuthentication no` + `PermitRootLogin no`（建议加 fail2ban），下次有 sudo 的操作窗口顺手核实。**
 
 ## 3. 验收结果
 

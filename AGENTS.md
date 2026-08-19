@@ -7,7 +7,8 @@ FS sweep worker / 纠错机制 / 记忆空间模型与鉴权 / Cell 架构 + 租
 EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线 / 可观测性埋点 /
 多租户工程红线落地 / SS 显著性打分服务 / 写入链 worker / IS 简版 / 运维操作面）
 已完成并验证（M0–M17 CI 全绿）。
-**下一步：阶段 1 准出验收**（开发文档 §19 验收总览，跨模块汇总判定）。
+**阶段 1 准出已官宣（2026-08-15，tag `stage-1-exit`，见 `准出评审报告-v1_0.md`）；
+下一步：种子期准备**（留痕库独立持久卷 / 用户协议授权条款 / 观察项消化 / 混沌 R1 首轮 / 参数标定）。
 一切设计结论以《Lethefield-设计文档》v1.7 为准，开发执行以《Lethefield-开发文档》v1.2 为准；
 设计未覆盖的分支先升级确认，不自行拍板。
 
@@ -261,7 +262,7 @@ EX 存储与 Pulsar 归属 + 三存储生命周期流水线 / 训练数据管线
   归属行（无半开通状态）。§12.4 授权注册表入口收在 IS CLI
   （`auth grant/revoke/list --space`，内部走 space_ref_of 哈希）。
 - M17 定案（运维操作面 `ops/ops_cli`，lethefield-ops-cli；升级确认入档开发文档修订记录
-  第 25 条）：**1.0 运维写入口唯一收口**——九条命令 `space status/destroy/set-tier`、
+  第 26 条）：**1.0 运维写入口唯一收口**——九条命令 `space status/destroy/set-tier`、
   `migrate rebalance/to-cell/evacuate`（迁移三类触发）、`auth revoke`、
   `cell watermark/register`，全部**必选** `--space`/`--cell` 绑定（evacuate 也是显式
   space 列表，无全局形态；静态检查 = parser 内省单测 `test_no_global_commands.py`）。
