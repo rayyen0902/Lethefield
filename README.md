@@ -36,10 +36,14 @@ uv run pytest tests/integration/test_m10_migration_drill_exit.py -v   # 准出�
 
 ## 对外接口（用户接入）
 
-- **HTTP API**：FastAPI 四端点（`memory.record` / `flag_conflict` / `reinforce` / `retrieve`），
-  Bearer JWT（HS256，凭证由 IS 签发/吊销）。
-- **MCP server**：`uv run python -m lethefield_api.mcp_server`（stdio 传输，本地进程形态，
-  token 走 `LETHEFIELD_MCP_TOKEN` 环境变量）——四工具薄壳，业务逻辑全在 service 层。
+**正式对外契约只有 HTTP + JSON API**（设计文档 v1.8 收窄定案；客户端 SDK/宿主插件/
+宿主适配器属前端工程，见《前端设计-客户端与宿主接入-v0_1.md》）。
+
+- **HTTP API（正式契约）**：FastAPI 四端点（`memory.record` / `flag_conflict` /
+  `reinforce` / `retrieve`），Bearer JWT（HS256，凭证由 IS 签发/吊销）。
+- **MCP server（本地/开发便利形态，非正式契约）**：
+  `uv run python -m lethefield_api.mcp_server`（stdio 传输，token 走
+  `LETHEFIELD_MCP_TOKEN` 环境变量）——四工具薄壳，业务逻辑全在 service 层。
 - **Python SDK**：`lethefield_api.sdk.MemoryClient`（httpx 薄封装）。
 - 凭证管理（账号/空间/签发/吊销/训练授权）走 IS CLI：
   `uv run python -m lethefield_is --help`；运维操作（销毁/迁移/tier/水位）走
@@ -54,7 +58,8 @@ libs/logschema/    结构化日志事件 schema（M12 日志管线原料）
 libs/metrics/      指标 registry 封装（命名规则 + 标签白/黑名单代码层强制）
 libs/clients/      存储/Pulsar 客户端封装 + ControlPlaneStore 抽象（M0 冻结接口）
                    + 契约 1/3/5 + 授权注册表/凭证 store + FF/归档/迁移共享原语
-services/          服务进程边界：api（M5 接口层，含 MCP/SDK）/ fs（M6 sweep）/
+services/          服务进程边界：api（M5 对外 API 层，HTTP+JSON；附 stdio MCP 薄壳，
+                   本地/开发便利形态、非正式契约，设计文档 v1.8）/ fs（M6 sweep）/
                    rms（M2–M4/M7：schema/FF/检索/纠错/重建）/ scheduler（M9/M10 调度器）/
                    training（M11/M12 训练数据管线 + ③ 过滤器）/ ss（M14 六维打分）/
                    writer（M15 写入链）/ is（M16 身份与凭证）
